@@ -245,3 +245,57 @@ was not performed" caveats — both were actually tested this time, for real.
   conversion, the `OffscreenCanvas` feature-detection/fallback design, and
   added a "Testing architecture" section describing the unit/e2e split and
   why CI only runs Chromium.
+
+---
+
+## 2026-09-04 20:33 — Resolved the npm audit debt: Vite 5 -> 7, Vitest 2 -> 3
+
+Continued auditing per this session's brief rather than treating the
+previous entry's report as final. The `TECHNICAL DEBT` section written in
+the last entry claimed the `esbuild` advisory could only be fixed by
+force-installing the experimental rolldown-based Vite 8. That claim was
+never actually tested against the real Vite 6/7 release history — it was
+investigated properly this time.
+
+### Fixed
+
+* **`npm audit`'s 5 vulnerabilities** (one advisory chain,
+  [GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99),
+  a dev-server-only esbuild issue) — confirmed via direct research that
+  Vite 7.x is still the stable, Rollup-based lineage (rolldown is Vite
+  8/9, a separate opt-in rewrite) and pulls a patched `esbuild`. Upgraded
+  `vite` `^5.4.11` -> `^7.3.6`, `vitest` `^2.1.8` -> `^3.2.4` (resolved to
+  `3.2.7`), `@vitejs/plugin-react` `^4.3.4` -> `^4.7.0` (the versions that
+  support Vite 7 without forcing plugin-react 5/6 or Vitest 5, which
+  require Vite 8). Also removed `vite-plugin-static-copy`, confirmed
+  unused via `grep -rn "vite-plugin-static-copy" src/ vite.config.ts`
+  (no matches) — a leftover from the original project scaffold.
+
+### Verified
+
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`: both clean after the upgrade.
+* `npx vitest run`: 64/64 passed (now under vitest 3.2.7).
+* `npm run build`: succeeds, bundle sizes near-identical to pre-upgrade.
+* `npx playwright test` across all three configured projects, matching
+  pre-upgrade results exactly: chromium 25/25, firefox 25/25, webkit
+  17/25 passed + 8 skipped + 0 failed. (First chromium run showed 1
+  transient failure from Vite's one-time "re-optimizing dependencies"
+  cold start after the lockfile changed; an immediate re-run with a warm
+  cache passed 25/25, ruling out a real regression.)
+* `npm ci` against the new `package-lock.json`, run in an isolated scratch
+  directory separate from the live project: succeeded cleanly, 361
+  packages, 0 vulnerabilities.
+* `npm audit`: **0 vulnerabilities** (down from 5).
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: struck through and corrected the
+  `TECHNICAL DEBT` entry that had claimed this required Vite 8.
+
+### Git
+
+* One commit this session (`build: upgrade Vite 5 -> 7 and Vitest 2 -> 3
+  to resolve npm audit findings`), authored as the repository's configured
+  identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD` after committing, same as every
+  prior commit this session.

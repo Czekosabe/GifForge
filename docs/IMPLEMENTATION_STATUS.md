@@ -510,19 +510,19 @@ test intentionally exercises an error path, which is asserted on directly).
 Shortcuts and workarounds taken deliberately, that should be revisited if
 they start costing more than they saved:
 
-- **`npm audit` reports 5 vulnerabilities (3 moderate, 1 high, 1 critical)**,
-  all from one advisory chain: `esbuild <=0.24.2` (via `vite`/`vitest`),
-  [GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99) —
-  a *dev-server-only* issue (a malicious website can make requests to
-  esbuild's dev server and read the response while it's running locally);
-  it does not affect the production build output. `npm audit fix --force`
-  would resolve it by force-installing `vite@8.x`, which is the
-  experimental rolldown-based Vite rewrite — the exact bleeding-edge
-  version this project deliberately moved *away* from early on for
-  stability (see "Vite (classic...)" in Technical Decisions above).
-  Accepted as-is; revisit when Vite 6/7's stable (non-rolldown) esbuild
-  dependency is upgraded upstream, or if a *production*-impacting advisory
-  appears in this chain.
+- ~~**`npm audit` reports 5 vulnerabilities**~~ — **Resolved 2026-09-04.**
+  The earlier note here claimed fixing this required the experimental
+  rolldown-based Vite 8 and left it as accepted debt. That was wrong: Vite
+  7.x is still the stable Rollup-based lineage and pulls a patched esbuild,
+  so it resolves
+  [GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)
+  without touching the experimental rewrite. Upgraded `vite` 5→7,
+  `vitest` 2→3, `@vitejs/plugin-react` 4.3→4.7 (the versions that support
+  Vite 7 without forcing Vite 8), and removed the unused
+  `vite-plugin-static-copy` dependency. `npm audit` now reports 0
+  vulnerabilities; full verification (typecheck/lint/unit tests/build/all
+  three Playwright browser projects/`npm ci` reproducibility) all matched
+  pre-upgrade results exactly. See `docs/PROGRESS.md` for the full record.
 - **The full three-browser e2e suite is not in CI**, only Chromium is (see
   `.github/workflows/ci.yml` and `playwright.config.ts`) — a deliberate
   runtime/complexity tradeoff (WebKit alone takes ~40s–8min depending on
