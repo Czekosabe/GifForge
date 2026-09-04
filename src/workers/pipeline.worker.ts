@@ -1,0 +1,387 @@
+/// <reference lib="webworker" />
+import * as Comlink from 'comlink'
+import { decodeGif, GifDecodeError } from '../core/gif/decoder'
+import { encodeGif, EncodeCancelledError } from '../core/gif/encoder'
+import { renderFrame, computeOutputDimensions, canvasToImageData, type CanvasFactory } from '../core/render/compositeFrame'
+import { runTargetSizeSearch } from '../core/optimization/targetSizeSearch'
+import { applySpeedToDelay } from '../core/edit/frameOrder'
+import { isFrameVisible, parseFrameRange } from '../core/selection/frameRange'
+import type { CompositedFrame, GifMetadata } from '../types/gif'
+import type { EditOperations, ExportSettings, Layer, OptimizationSettings } from '../types/project'
+
+const offscreenCanvasFactory: CanvasFactory = {
+  create: (width, height) => new OffscreenCanvas(width, height),
+}
+
+const MEMORY_HARD_CAP_BYTES = 2 * 1024 * 1024 * 1024 // 2GB decoded RGBA — refuse above this
+const MEMORY_WARN_BYTES = 300 * 1024 * 1024 // 300MB decoded RGBA — suggest Performance Mode
+
+export interface LoadGifResult {
+  metadata: GifMetadata
+  suggestPerformanceMode: boolean
+  estimatedMemoryBytes: number
+  frameDelaysMs: number[]
+}
+
+export interface PreviewFrameBundle {
+  frameIndex: number
+  bitmap: ImageBitmap
+}
+
+type ProgressCallback = (fraction: number | null, message: string) => void
+
+class GifPipeline {
+  private sourceFrames: CompositedFrame[] = []
+  private metadata: GifMetadata | null = null
+  private assets = new Map<string, ImageBitmap>()
+  private abortController: AbortController | null = null
+
+  async loadGif(buffer: ArrayBuffer, fileName: string, onProgress?: ProgressCallback): Promise<LoadGifResult> {
+    onProgress?.(null, 'Parsing GIF…')
+
+    let result
+    try {
+      result = decodeGif(buffer, { fileName })
+    } catch (err) {
+      if (err instanceof GifDecodeError) throw new Error(err.message)
+      throw err
+    }
+
+    const estimatedMemoryBytes = result.metadata.width * result.metadata.height * 4 * result.metadata.frameCount
+    if (estimatedMemoryBytes > MEMORY_HARD_CAP_BYTES) {
+      throw new Error(
+        `This GIF would require approximately ${(estimatedMemoryBytes / 1e9).toFixed(1)}GB of memory to decode, which exceeds what a browser tab can safely handle. Try a smaller file.`,
+      )
+    }
+
+    onProgress?.(0.5, 'Compositing frames…')
+    this.sourceFrames = result.frames
+    this.metadata = result.metadata
+    onProgress?.(1, 'Done')
+
+    return {
+      metadata: result.metadata,
+      suggestPerformanceMode: estimatedMemoryBytes > MEMORY_WARN_BYTES,
+      estimatedMemoryBytes,
+      frameDelaysMs: result.frames.map((f) => f.delayMs),
+    }
+  }
+
+  async getPreviewBitmaps(maxDimension: number): Promise<ImageBitmap[]> {
+    this.assertLoaded()
+    const { width, height } = this.metadata!
+    const scale = Math.min(1, maxDimension / Math.max(width, height))
+    const targetW = Math.max(1, Math.round(width * scale))
+    const targetH = Math.max(1, Math.round(height * scale))
+
+    const bitmaps: ImageBitmap[] = []
+    for (const frame of this.sourceFrames) {
+      if (scale === 1) {
+        bitmaps.push(await createImageBitmap(new ImageData(frame.rgba, width, height)))
+      } else {
+        const src = new OffscreenCanvas(width, height)
+        src.getContext('2d')!.putImageData(new ImageData(frame.rgba, width, height), 0, 0)
+        const dst = new OffscreenCanvas(targetW, targetH)
+        const dstCtx = dst.getContext('2d')!
+        dstCtx.imageSmoothingEnabled = true
+        dstCtx.imageSmoothingQuality = 'medium'
+        dstCtx.drawImage(src, 0, 0, targetW, targetH)
+        bitmaps.push(dst.transferToImageBitmap())
+      }
+    }
+    return Comlink.transfer(bitmaps, bitmaps)
+  }
+
+  async getThumbnail(frameIndex: number, maxSize: number): Promise<ImageBitmap> {
+    this.assertLoaded()
+    const frame = this.sourceFrames[frameIndex]
+    if (!frame) throw new Error(`Frame ${frameIndex} does not exist.`)
+    const { width, height } = this.metadata!
+    const scale = Math.min(1, maxSize / Math.max(width, height))
+    const targetW = Math.max(1, Math.round(width * scale))
+    const targetH = Math.max(1, Math.round(height * scale))
+
+    const src = new OffscreenCanvas(width, height)
+    src.getContext('2d')!.putImageData(new ImageData(frame.rgba, width, height), 0, 0)
+    const dst = new OffscreenCanvas(targetW, targetH)
+    const dstCtx = dst.getContext('2d')!
+    dstCtx.imageSmoothingEnabled = true
+    dstCtx.drawImage(src, 0, 0, targetW, targetH)
+    const bitmap = dst.transferToImageBitmap()
+    return Comlink.transfer(bitmap, [bitmap])
+  }
+
+  async registerAsset(assetId: string, bitmap: ImageBitmap): Promise<void> {
+    this.assets.set(assetId, bitmap)
+  }
+
+  async removeAsset(assetId: string): Promise<void> {
+    this.assets.delete(assetId)
+  }
+
+  private buildEditedFrameList(edits: EditOperations): { rgba: Uint8ClampedArray; delayMs: number; originalIndex: number }[] {
+    return edits.frameOrder.map((originalIndex) => {
+      const frame = this.sourceFrames[originalIndex]
+      if (!frame) throw new Error(`Frame order references missing frame ${originalIndex}.`)
+      return {
+        rgba: frame.rgba,
+        delayMs: applySpeedToDelay(frame.delayMs, edits.speed.factor),
+        originalIndex,
+      }
+    })
+  }
+
+  private renderFullFrame(
+    rgba: Uint8ClampedArray,
+    edits: EditOperations,
+    layers: Layer[],
+    frameNumber1Based: number,
+    totalFrames: number,
+  ): ImageData {
+    this.assertLoaded()
+    const { width, height } = this.metadata!
+    // Project.layers is stored top-of-panel-first (index 0 = frontmost, matching the Layers
+    // panel and standard design-tool convention), but the draw loop needs bottom-to-top order.
+    const visibleLayers = layers
+      .filter((l) => isFrameVisible(l.frameRange, frameNumber1Based, totalFrames))
+      .reverse()
+
+    const canvas = renderFrame(
+      {
+        sourceRgba: rgba,
+        sourceWidth: width,
+        sourceHeight: height,
+        crop: edits.crop,
+        resize: edits.resize,
+        rotate: edits.rotate,
+        layers: visibleLayers,
+        getAssetBitmap: (id) => this.assets.get(id),
+      },
+      offscreenCanvasFactory,
+    )
+    return canvasToImageData(canvas)
+  }
+
+  async renderPreviewFrame(edits: EditOperations, layers: Layer[], timelineIndex: number): Promise<ImageBitmap> {
+    this.assertLoaded()
+    const editedFrames = this.buildEditedFrameList(edits)
+    const frame = editedFrames[timelineIndex]
+    if (!frame) throw new Error(`Timeline index ${timelineIndex} out of range.`)
+    const imageData = this.renderFullFrame(frame.rgba, edits, layers, timelineIndex + 1, editedFrames.length)
+    const bitmap = await createImageBitmap(imageData)
+    return Comlink.transfer(bitmap, [bitmap])
+  }
+
+  async getOutputDimensions(edits: EditOperations): Promise<{ width: number; height: number }> {
+    this.assertLoaded()
+    const { width, height } = this.metadata!
+    return computeOutputDimensions(width, height, edits.crop, edits.resize, edits.rotate)
+  }
+
+  private renderAllFrames(edits: EditOperations, layers: Layer[], onProgress?: ProgressCallback) {
+    const editedFrames = this.buildEditedFrameList(edits)
+    const dims = computeOutputDimensions(this.metadata!.width, this.metadata!.height, edits.crop, edits.resize, edits.rotate)
+    const rendered: { rgba: Uint8ClampedArray; delayMs: number }[] = []
+
+    for (let i = 0; i < editedFrames.length; i++) {
+      if (this.abortController?.signal.aborted) throw new EncodeCancelledError()
+      const frame = editedFrames[i]!
+      const imageData = this.renderFullFrame(frame.rgba, edits, layers, i + 1, editedFrames.length)
+      rendered.push({ rgba: imageData.data as unknown as Uint8ClampedArray, delayMs: frame.delayMs })
+      onProgress?.((i + 1) / editedFrames.length, `Rendering frame ${i + 1} of ${editedFrames.length}…`)
+    }
+
+    return { rendered, width: dims.width, height: dims.height }
+  }
+
+  async exportGif(
+    edits: EditOperations,
+    layers: Layer[],
+    settings: ExportSettings,
+    onProgress?: ProgressCallback,
+  ): Promise<Uint8Array> {
+    this.assertLoaded()
+    this.abortController = new AbortController()
+    const signal = this.abortController.signal
+
+    const frameRangeFrames =
+      settings.frameRange.trim().length > 0
+        ? filterByFrameRange(edits, settings.frameRange)
+        : edits
+
+    onProgress?.(0, 'Rendering frames…')
+    const { rendered, width, height } = this.renderAllFrames(frameRangeFrames, layers, (f, m) => onProgress?.((f ?? 0) * 0.7, m))
+
+    const scale = settings.scalePercent / 100
+    const scaledWidth = Math.max(1, Math.round(width * scale))
+    const scaledHeight = Math.max(1, Math.round(height * scale))
+    const scaledFrames =
+      scale === 1
+        ? rendered
+        : rendered.map((f) => ({ delayMs: f.delayMs, rgba: this.scaleRgba(f.rgba, width, height, scaledWidth, scaledHeight) }))
+
+    onProgress?.(0.75, 'Encoding GIF…')
+    const bytes = encodeGif(scaledFrames, {
+      width: scaledWidth,
+      height: scaledHeight,
+      maxColors: settings.maxColors,
+      dither: settings.dither,
+      ditherStrength: 1,
+      loopMode: settings.loopMode,
+      customLoopCount: settings.customLoopCount,
+      signal,
+      onProgress: (f) => onProgress?.(0.75 + f * 0.25, 'Encoding GIF…'),
+    })
+
+    onProgress?.(1, 'Done')
+    this.abortController = null
+    return Comlink.transfer(bytes, [bytes.buffer as ArrayBuffer])
+  }
+
+  async optimize(
+    edits: EditOperations,
+    layers: Layer[],
+    settings: OptimizationSettings,
+    onProgress?: ProgressCallback,
+  ) {
+    this.assertLoaded()
+    this.abortController = new AbortController()
+    const signal = this.abortController.signal
+
+    onProgress?.(0, 'Rendering frames…')
+    const { rendered, width, height } = this.renderAllFrames(edits, layers, (f, m) => onProgress?.((f ?? 0) * 0.3, m))
+
+    if (settings.preset === 'target-size' && settings.targetSizeBytes) {
+      const result = runTargetSizeSearch({
+        frames: rendered,
+        width,
+        height,
+        targetBytes: settings.targetSizeBytes,
+        keepDimensions: settings.keepDimensions,
+        allowFpsReduction: settings.allowFpsReduction,
+        allowFrameDropping: settings.allowFrameDropping,
+        allowResolutionReduction: settings.allowResolutionReduction,
+        loopMode: 'forever',
+        customLoopCount: 0,
+        signal,
+        onProgress: (f, m) => onProgress?.(0.3 + f * 0.7, m),
+      })
+      this.abortController = null
+      return {
+        bytes: Comlink.transfer(result.bytes, [result.bytes.buffer as ArrayBuffer]),
+        achievedBytes: result.achievedBytes,
+        achievedTarget: result.achievedTarget,
+        message: result.message,
+        width,
+        height,
+      }
+    }
+
+    const presetSettings = resolvePreset(settings)
+    const scale = presetSettings.scalePercent / 100
+    const scaledWidth = Math.max(1, Math.round(width * scale))
+    const scaledHeight = Math.max(1, Math.round(height * scale))
+    const scaledFrames =
+      scale === 1
+        ? rendered
+        : rendered.map((f) => ({ delayMs: f.delayMs, rgba: this.scaleRgba(f.rgba, width, height, scaledWidth, scaledHeight) }))
+
+    onProgress?.(0.5, 'Encoding…')
+    const bytes = encodeGif(scaledFrames, {
+      width: scaledWidth,
+      height: scaledHeight,
+      maxColors: presetSettings.maxColors,
+      dither: presetSettings.dither,
+      ditherStrength: presetSettings.ditherStrength,
+      loopMode: 'forever',
+      customLoopCount: 0,
+      signal,
+      onProgress: (f) => onProgress?.(0.5 + f * 0.5, 'Encoding…'),
+    })
+
+    this.abortController = null
+    return {
+      bytes: Comlink.transfer(bytes, [bytes.buffer as ArrayBuffer]),
+      achievedBytes: bytes.length,
+      achievedTarget: true,
+      message: `Optimized to ${(bytes.length / 1024).toFixed(1)} KB.`,
+      width: scaledWidth,
+      height: scaledHeight,
+    }
+  }
+
+  async exportStaticFrame(
+    edits: EditOperations,
+    layers: Layer[],
+    timelineIndex: number,
+    format: 'png' | 'jpeg',
+  ): Promise<Uint8Array> {
+    this.assertLoaded()
+    const editedFrames = this.buildEditedFrameList(edits)
+    const frame = editedFrames[timelineIndex]
+    if (!frame) throw new Error(`Timeline index ${timelineIndex} out of range.`)
+    const imageData = this.renderFullFrame(frame.rgba, edits, layers, timelineIndex + 1, editedFrames.length)
+    const canvas = new OffscreenCanvas(imageData.width, imageData.height)
+    canvas.getContext('2d')!.putImageData(imageData, 0, 0)
+    const blob = await canvas.convertToBlob({ type: format === 'png' ? 'image/png' : 'image/jpeg', quality: 0.92 })
+    const buffer = await blob.arrayBuffer()
+    const bytes = new Uint8Array(buffer)
+    return Comlink.transfer(bytes, [bytes.buffer as ArrayBuffer])
+  }
+
+  cancel(): void {
+    this.abortController?.abort()
+  }
+
+  private scaleRgba(rgba: Uint8ClampedArray, srcW: number, srcH: number, dstW: number, dstH: number): Uint8ClampedArray {
+    const src = new OffscreenCanvas(srcW, srcH)
+    src.getContext('2d')!.putImageData(new ImageData(rgba, srcW, srcH), 0, 0)
+    const dst = new OffscreenCanvas(dstW, dstH)
+    const dstCtx = dst.getContext('2d')!
+    dstCtx.imageSmoothingEnabled = true
+    dstCtx.imageSmoothingQuality = 'high'
+    dstCtx.drawImage(src, 0, 0, dstW, dstH)
+    return dstCtx.getImageData(0, 0, dstW, dstH).data as unknown as Uint8ClampedArray
+  }
+
+  private assertLoaded(): void {
+    if (!this.metadata) throw new Error('No GIF loaded in worker.')
+  }
+}
+
+function filterByFrameRange(edits: EditOperations, frameRangeSpec: string): EditOperations {
+  const { frames } = parseFrameRange(frameRangeSpec, edits.frameOrder.length)
+  const selected = new Set(frames)
+  return {
+    ...edits,
+    frameOrder: edits.frameOrder.filter((_, i) => selected.has(i + 1)),
+  }
+}
+
+function resolvePreset(settings: OptimizationSettings): {
+  maxColors: number
+  dither: boolean
+  ditherStrength: number
+  scalePercent: number
+} {
+  switch (settings.preset) {
+    case 'light':
+      return { maxColors: 256, dither: true, ditherStrength: 1, scalePercent: 100 }
+    case 'balanced':
+      return { maxColors: 128, dither: true, ditherStrength: 0.8, scalePercent: 100 }
+    case 'aggressive':
+      return { maxColors: 64, dither: settings.dither, ditherStrength: 0.5, scalePercent: Math.min(settings.scalePercent, 85) }
+    default:
+      return {
+        maxColors: settings.maxColors,
+        dither: settings.dither,
+        ditherStrength: settings.ditherStrength,
+        scalePercent: settings.scalePercent,
+      }
+  }
+}
+
+const pipeline = new GifPipeline()
+Comlink.expose(pipeline)
+
+export type { GifPipeline }
