@@ -218,11 +218,37 @@ status" below for exactly what was checked.
   "only encode the changed pixels" size optimization that some hand-tuned
   GIFs use. Correctness is unaffected; only a potential extra size-reduction
   opportunity is left on the table.
-- **Large-file stress testing was not performed** beyond the memory-estimate
-  math and a 1MB/44-frame real fixture. Behavior on genuinely huge
-  (hundreds-of-MB) GIFs is based on the estimate-and-warn logic, not observed.
-- **Only Chromium was tested** (via Playwright, headless). No manual
-  cross-browser (Firefox/Safari) verification was performed.
+- **Large-file stress testing**: performed this session with a synthetic
+  600-frame, 480×360 GIF (estimated decoded memory ~415MB, above the 300MB
+  Performance Mode threshold; generated via `scripts/generate-stress-fixture.cjs`,
+  not committed — see that script's header for why). Results, measured, not
+  estimated: load (decode + composite + preview bitmaps) completed in ~5.2s;
+  Performance Mode's badge correctly appeared; the timeline stayed windowed
+  (19–23 DOM thumbnail nodes rendered at any time, not 600) and scrolling
+  stayed responsive (~300ms to scroll and settle); playback and tool-panel
+  switching stayed responsive throughout; export completed in ~10.4s,
+  producing a real, 27.6MB, correctly-dimensioned, correctly-framed,
+  re-decodable GIF; zero console/page errors. Not tested: files in the
+  hundreds-of-MB-compressed or multi-GB-decoded range (the 2GB hard-cap
+  refusal path is implemented but this session did not construct a fixture
+  large enough to exercise it).
+- **Browser compatibility — WebKit's OffscreenCanvas gap**: the WebKit build
+  used for this project's Playwright tests has **no OffscreenCanvas support
+  at all**, on the main thread or in a Worker (verified directly:
+  `typeof OffscreenCanvas` is `undefined` in both contexts) — real, current
+  Safari's support was not independently verified, since no actual Safari
+  was available to test against. GifForge's worker-side render pipeline
+  (export, optimize, static-frame export, and downscaled thumbnails/preview
+  bitmaps) depends on OffscreenCanvas; a capability check
+  (`assertOffscreenCanvasSupport` in `pipeline.worker.ts`) now makes these
+  fail fast with a clear, actionable message instead of a native
+  `ReferenceError`, and preview bitmaps/thumbnails fall back to
+  full-resolution `createImageBitmap` (more memory, but the app stays
+  usable) rather than failing outright. Upload, decode, playback, timeline,
+  and interactive crop/resize/rotate/text/overlay preview (all Konva/main-
+  thread, no OffscreenCanvas needed) are unaffected and fully verified
+  working in this WebKit build. See "Browser test results" below for exact
+  numbers.
 
 # TECHNICAL DECISIONS
 
@@ -274,17 +300,26 @@ status" below for exactly what was checked.
 - **Typecheck**: `npx tsc -b` — clean, zero errors.
 - **Lint**: `npx eslint . --ext ts,tsx` — clean, zero errors/warnings.
 - **Production build**: `npm run build` — succeeds.
-- **Browser smoke tests**: performed with Playwright (headless Chromium)
-  driving the real Vite dev server, checking console/page errors at every
-  step and inspecting actual downloaded bytes / canvas pixel data (not just
-  screenshots). Flows verified: upload → decode → preview → playback UI →
-  timeline thumbnails → crop tool → export → re-decode exported file
-  (correct dims/frame-count/**timing**); resize → speed → reverse → rotate →
-  undo×2 → text layer + preset (pixel-verified on canvas) → optimize (real
-  size/palette/dimension change) → download optimized file; image overlay
-  upload with transparency (pixel-verified) → static PNG frame export
-  (signature-verified); edit → reload → autosave restore (state-verified).
-  Zero console errors or uncaught page errors across all runs.
+- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 25
+  persisted tests across 5 files, actually part of this repository (unlike
+  prior sessions' ad hoc scratch scripts — see `docs/PROGRESS.md`'s
+  2026-09-04 20:13 entry). Each real-browser-only regression case earlier
+  sessions found manually (layer z-order, layer reorder direction, target-
+  size search reduction ordering, frame-count sync after delete, error-
+  boundary recovery, etc.) now has a permanent test guarding it. CI runs
+  the chromium project on every push/PR; the full cross-browser run
+  (`npm run test:e2e`, all three engines) is run periodically/manually.
+
+  ### Browser test results (last run 2026-09-04, this repo's actual `e2e/` suite)
+
+  | Browser  | Passed | Skipped | Failed | Notes |
+  |----------|-------:|--------:|-------:|-------|
+  | Chromium | 25/25  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
+  | Firefox  | 25/25  | 0       | 0      | Run manually this session; not in CI |
+  | WebKit   | 17/25  | 8       | 0      | 8 tests skip with an explicit reason: export/optimize/static-frame-export need OffscreenCanvas, unavailable in this WebKit build (see "Known Limitations") |
+
+  "TESTED" below means an assertion in this table or in `e2e/` actually ran
+  and passed against that engine this session — not inferred or assumed.
 
 ## Bugs found and fixed (all caught by live-browser/real-file verification, not code review)
 
@@ -377,6 +412,27 @@ status" below for exactly what was checked.
    and a fresh real export show only the new overlay's color, not the old
    one's; "Reset to original" with an overlay present cleanly removes it and
    the app remains fully functional afterward.
+8. **Overlay assets and autosave silently failed to persist in WebKit**:
+   running the newly-persisted e2e suite against a real WebKit build (see
+   "Browser compatibility" in Known Limitations) surfaced
+   `UnknownError: Error preparing Blob/File data to be stored in object
+   store` — a real WebKit IndexedDB limitation: raw `Blob`/`File` objects
+   cannot be `put()` directly into an object store in this build, though a
+   plain `ArrayBuffer` can. This broke two things at once, both going
+   through the same `db.ts` storage layer: adding an image overlay (which
+   silently never got added as a layer at all — `OverlayPanel.tsx`'s error
+   handling aborted before `addLayer`) and autosave (the warning was visible
+   in the console but the project was never actually persisted). Fixed by
+   converting `Blob`s to `ArrayBuffer` (plus a stored MIME type) at the
+   `db.ts` storage boundary and reconstructing a `Blob` on read — the public
+   `saveAsset`/`loadAssets`/`saveProjectAutosave`/`loadProjectAutosave` API
+   (and every caller) is unchanged. Also made overlay-asset persistence
+   best-effort: a storage failure no longer prevents the overlay from being
+   usable for the rest of the current session, only from surviving a
+   reload. Verified live in WebKit: overlay upload, "Reset to original",
+   and autosave/restore all went from failing to passing after this fix
+   (see the before/after counts in "Browser test results" below), with zero
+   change to Chromium/Firefox behavior (still 25/25 after the fix).
 
 ## Verification rounds
 
@@ -429,5 +485,85 @@ status" below for exactly what was checked.
   color; "Reset to original" cleans up correctly); and the error boundary
   (intentionally threw from `App`, confirmed the recovery screen renders
   instead of a blank page, then reverted the test throw).
+- **Round 6** (this session — repository/process maintenance + another
+  independent audit; see `docs/PROGRESS.md`'s 2026-09-04 entries for the
+  full account): converted the prior sessions' ad hoc, non-repository
+  Playwright scripts into 25 persisted `e2e/` tests; ran them for real
+  against Chromium, Firefox, *and* WebKit (previously only Chromium had
+  ever actually been run) and found and fixed bug #8 above (WebKit
+  IndexedDB Blob storage) and added graceful OffscreenCanvas feature
+  detection; stress-tested a synthetic 600-frame/480×360/~415MB-estimated
+  GIF (see "Large-file stress testing" above for the real measured
+  numbers); along the way, discovered and corrected a *process* issue, not
+  an app bug — leaving large generated stress-test binaries sitting in the
+  Vite-watched project root destabilized the dev server itself (intermittent
+  hangs/timeouts unrelated to GifForge's own code), which had produced
+  misleading results earlier in this same session until traced to its
+  actual cause; `scripts/generate-stress-fixture.cjs` now documents writing
+  such fixtures outside the project root.
 
-All five rounds: zero console errors or uncaught page errors.
+All six rounds: zero console errors or uncaught page errors (except where a
+test intentionally exercises an error path, which is asserted on directly).
+
+# TECHNICAL DEBT
+
+Shortcuts and workarounds taken deliberately, that should be revisited if
+they start costing more than they saved:
+
+- **`npm audit` reports 5 vulnerabilities (3 moderate, 1 high, 1 critical)**,
+  all from one advisory chain: `esbuild <=0.24.2` (via `vite`/`vitest`),
+  [GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99) —
+  a *dev-server-only* issue (a malicious website can make requests to
+  esbuild's dev server and read the response while it's running locally);
+  it does not affect the production build output. `npm audit fix --force`
+  would resolve it by force-installing `vite@8.x`, which is the
+  experimental rolldown-based Vite rewrite — the exact bleeding-edge
+  version this project deliberately moved *away* from early on for
+  stability (see "Vite (classic...)" in Technical Decisions above).
+  Accepted as-is; revisit when Vite 6/7's stable (non-rolldown) esbuild
+  dependency is upgraded upstream, or if a *production*-impacting advisory
+  appears in this chain.
+- **The full three-browser e2e suite is not in CI**, only Chromium is (see
+  `.github/workflows/ci.yml` and `playwright.config.ts`) — a deliberate
+  runtime/complexity tradeoff (WebKit alone takes ~40s–8min depending on
+  pass/fail mix; all three would meaningfully slow every PR). Firefox and
+  WebKit are still first-class, easily-runnable local projects
+  (`npm run test:e2e -- --project=firefox`), just not automated per-push.
+  Revisit if WebKit support becomes a real product priority (see Next
+  Priorities) — at that point the failing/skipped WebKit tests would need
+  to actually pass, and adding a WebKit CI job would be worth the time cost.
+- **Overlay-asset persistence is now explicitly best-effort** (see bug #8):
+  a `saveAsset` failure is caught and logged rather than blocking the user.
+  This is the right tradeoff for a *storage* failure, but it does mean a
+  systemic IndexedDB problem (quota exhausted, private browsing in a
+  browser that fully disables it, etc.) degrades silently-ish (a
+  `console.warn`, no user-facing toast) rather than surfacing clearly. A
+  one-time "autosave isn't working" notice would be a reasonable follow-up
+  if this turns out to matter in practice.
+- **No sub-rectangle frame-diffing on export** (already listed under Known
+  Limitations) is technical debt as much as a limitation — the encoder
+  interface (`core/gif/encoder.ts`) was intentionally kept simple pending
+  evidence that output size actually needs it for real users' GIFs.
+
+# NEXT PRIORITIES
+
+Ranked by expected value given the current state — highest first:
+
+1. **Get WebKit's 8 skipped tests passing**, if real Safari/WebKit support
+   turns out to matter for the target audience. Requires either confirming
+   real Safari *does* support OffscreenCanvas (in which case the gap is
+   specific to Playwright's bundled WebKit test build, not a real product
+   problem, and the fix is just re-verifying against real Safari) or, if
+   real Safari genuinely lacks it too, implementing a non-OffscreenCanvas
+   fallback render path for the export/optimize pipeline specifically —
+   a real architectural addition, not a quick fix, so worth confirming the
+   premise first.
+2. **A visual before/after split view for Optimize** (currently numeric +
+   download only) — the highest-value remaining UX gap from the original
+   feature list that hasn't been implemented.
+3. **Sub-rectangle frame diffing on export**, *only* if a real GIF's output
+   size becomes a concrete complaint — correctness must not regress, so
+   this needs its own disposal-correctness test coverage before shipping.
+4. Everything explicitly deferred per the original spec (MP4/WebM, ZIP
+   export, APNG/WebP, subtitles, batch processing, filters) remains
+   correctly out of scope until requested.

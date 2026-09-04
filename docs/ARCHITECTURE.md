@@ -91,6 +91,24 @@ and does all buffer-heavy work in-process; only small results (thumbnails,
 preview `ImageBitmap`s, the final encoded `Uint8Array`) cross back to the main
 thread, using `Comlink.transfer` for zero-copy handoff.
 
+**OffscreenCanvas feature detection.** The worker's pixel-level rendering
+(final-quality frame composition, thumbnail/preview downscaling, static-frame
+export) is built on `OffscreenCanvas`. Not every engine implements it — this
+was found directly this session, not assumed: the WebKit build used for this
+project's Playwright tests has no `OffscreenCanvas` at all, on the main
+thread or in a worker. `assertOffscreenCanvasSupport()` in `pipeline.worker.ts`
+checks this once (`typeof OffscreenCanvas !== 'undefined'`) and is called at
+the entry point of every OffscreenCanvas-dependent method, so a browser
+lacking it gets one clear, actionable error ("Your browser does not support
+OffscreenCanvas...") instead of a native `ReferenceError` mid-operation.
+Two paths that don't strictly need full-resolution downscaling degrade
+gracefully instead of failing outright: `getPreviewBitmaps` and
+`getThumbnail` fall back to full-resolution `createImageBitmap` (more
+per-frame memory, but the app stays usable) when OffscreenCanvas is
+unavailable. Export, optimize, and static-frame export have no such
+fallback — they hard-fail with the clear message, since silently degrading
+export correctness/quality would be worse than an honest error.
+
 ## Coordinate system
 
 All layer/crop coordinates in `Project` are in **image space**: pixels of the
@@ -154,6 +172,19 @@ every keystroke/drag tick. On startup, `useAutosaveRestore.ts` offers to
 restore: it re-runs `loadGif` against the saved source blob (the worker's
 decoded state doesn't survive a reload) and re-registers saved overlay assets.
 
+**Binary data is stored as `ArrayBuffer`, not `Blob`.** The public API
+(`saveAsset`/`loadAssets`/`saveProjectAutosave`/`loadProjectAutosave`) still
+deals entirely in `Blob` — callers never see this — but `db.ts` converts to
+`ArrayBuffer` (plus a stored MIME type) immediately before every `put()` and
+reconstructs a `Blob` immediately after every read. This exists because a
+real WebKit IndexedDB limitation was found this session: some WebKit builds
+throw `UnknownError: Error preparing Blob/File data to be stored in object
+store` when a raw `Blob`/`File` is put directly into an object store, while
+an `ArrayBuffer` has no such problem in any tested browser. Overlay-asset
+persistence is additionally best-effort — a `saveAsset` failure is caught
+and logged rather than blocking the layer from being usable for the rest of
+the current session (only autosave-restore-after-reload is affected).
+
 ## Lifecycle sync and cleanup (`src/app/use*.ts`)
 
 Two things need to stay correct across *every* action that can change a
@@ -185,6 +216,36 @@ UI/playback state. The next upload lazily spins up a fresh worker.
 A top-level `ErrorBoundary` (wrapping `<App />` in `main.tsx`) is the last
 line of defense: an uncaught render error shows a plain "GifForge needs to
 restart" screen with a reload button instead of silently blanking the page.
+
+## Testing architecture
+
+Two layers, deliberately not overlapping in what they cover:
+
+- **Unit tests** (`src/**/*.test.ts`, Vitest, `npm test`) — pure logic that
+  doesn't need a browser: frame-range parsing, coordinate math,
+  crop/resize/rotate math, frame-order edit operations, the GIF disposal
+  compositor, target-size search config ordering, and full decode → encode
+  → re-decode round-trips against real downloaded GIF fixtures
+  (`fixtures/*.gif`). Runs in Node via `jsdom`.
+- **Browser regression tests** (`e2e/*.spec.ts`, Playwright, `npm run
+  test:e2e`) — everything that needs a real rendering engine: canvas pixel
+  content, file upload/download, IndexedDB, Worker/OffscreenCanvas behavior.
+  `playwright.config.ts` defines all three engines (chromium/firefox/webkit)
+  as projects; CI (`.github/workflows/ci.yml`) runs chromium only for fast
+  PR feedback, the full three-engine run is manual/periodic
+  (`npm run test:e2e` with no `--project` filter runs all three locally).
+  `e2e/helpers.ts` centralizes fixture paths and shared assertions
+  (decoding an exported file, reading a specific canvas's pixel data) so
+  each spec file stays focused on one flow.
+
+Each `e2e/` test exists because a real regression was found manually in an
+earlier session and is now guarded permanently — see
+`docs/IMPLEMENTATION_STATUS.md`'s "Bugs found and fixed" for the specific
+incident each one traces back to. A small number of tests
+(`test.skip(browserName === 'webkit', ...)`) are skipped, not failed, in
+WebKit for the documented `OffscreenCanvas` gap above — skip with a reason
+is the correct outcome for a known, external, per-engine limitation, not a
+red failure that would need re-investigating every run.
 
 ## Dependency policy
 
