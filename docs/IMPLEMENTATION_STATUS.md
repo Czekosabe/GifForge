@@ -433,6 +433,40 @@ status" below for exactly what was checked.
    and autosave/restore all went from failing to passing after this fix
    (see the before/after counts in "Browser test results" below), with zero
    change to Chromium/Firefox behavior (still 25/25 after the fix).
+9. **Cancel did not actually stop an in-progress export or optimization**:
+   `renderAllFrames`/`encodeGif`/`runTargetSizeSearch` ran as one fully
+   synchronous block inside the worker with no `await` points. A Worker can
+   only process an incoming `postMessage` — including the Comlink RPC call
+   that triggers `AbortController.abort()` — between synchronous stretches
+   of JS, so clicking "Cancel" never actually got delivered to the worker
+   until the operation had already run to completion on its own; the
+   button changed labels but the work kept running regardless. Caught while
+   writing a new e2e test for the cancel button (there had been zero
+   coverage of it before): the test's 5-second wait for the UI to return to
+   "Run optimization" after cancelling timed out, because the ~8-second
+   search was still running uninterrupted underneath. Fixed by making
+   `encodeGif`/`runTargetSizeSearch`/`renderAllFrames` `async` and yielding
+   to the event loop every few frames/attempts (`yieldToEventLoop` in
+   `src/core/util/`), so a pending cancel is actually observed mid-operation
+   instead of only before it starts or after it finishes. This also
+   uncovered a second, related bug: the aborted operation's rejected
+   `EncodeCancelledError` promise still reached the panel's `catch` block
+   and called `failJob()`, overwriting the job's `'cancelled'` status back
+   to `'failed'` and showing a red "Encoding was cancelled." error toast for
+   a routine user action — and `ExportPanel`'s cancel button never called
+   `cancelJob()` at all (unlike `OptimizePanel`'s), so it hit the same
+   symptom from a different path. Both panels now check the job's current
+   status before calling `failJob`, and `ExportPanel` tracks its job id the
+   same way `OptimizePanel` already did. Verified live: the new e2e test
+   clicks Cancel ~300ms into a real ~8s target-size search and confirms no
+   error toast, the Run button reappears promptly, and the worker is still
+   usable for a follow-up run afterward — passes on Chromium and Firefox
+   (skipped on WebKit, consistent with the rest of this suite, since it
+   needs OffscreenCanvas). `ExportPanel`'s identical fix was not separately
+   e2e-tested: a plain export of this repo's committed fixtures completes
+   in well under a second, too fast to reliably intercept mid-flight
+   without flaky timing — it shares the exact same `renderAllFrames`/
+   `encodeGif` code path already proven by the optimize test.
 
 ## Verification rounds
 

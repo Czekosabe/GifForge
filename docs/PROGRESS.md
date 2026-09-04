@@ -371,3 +371,92 @@ happens in a browser.
   touch OffscreenCanvas).
 * `npx tsc -b`, `npx eslint . --ext ts,tsx`, `npx vitest run` (64/64): all
   clean afterward.
+
+---
+
+## 2026-09-04 20:52 — Real bug: Cancel didn't actually cancel
+
+Writing the e2e test above led directly into a second, more significant
+finding: nothing had ever tested the Cancel button on export/optimize
+jobs, and it turned out not to work.
+
+### Fixed
+
+* **Cancel was a no-op for any operation slower than instant** (bug #9 in
+  `docs/IMPLEMENTATION_STATUS.md`). `renderAllFrames`, `encodeGif`, and
+  `runTargetSizeSearch` ran as one fully synchronous block in the worker.
+  A Worker can only process an incoming `postMessage` — including the
+  Comlink call that triggers `AbortController.abort()` — between
+  synchronous stretches of JS, so the cancel request itself was never
+  delivered until the operation had already finished on its own. Fixed by
+  making all three functions `async` and yielding to the event loop every
+  4 frames/attempts via a new `yieldToEventLoop` helper
+  (`src/core/util/yieldToEventLoop.ts`), so a pending cancel actually gets
+  observed mid-operation.
+* **A cancelled job displayed as a red "failed" error toast.** Once the
+  above made cancellation real, the aborted operation's rejected
+  `EncodeCancelledError` promise still reached each panel's `catch` block
+  and called `failJob()`, overwriting the `'cancelled'` status the cancel
+  button had just set back to `'failed'`. `ExportPanel` additionally never
+  called `cancelJob()` at all (unlike `OptimizePanel`), so its cancel
+  button didn't mark the job cancelled client-side either. Fixed in both
+  panels: check the job's current status before calling `failJob`, and
+  `ExportPanel` now tracks its job id the same way `OptimizePanel` already
+  did.
+
+### Changed
+
+* `encodeGif` (`src/core/gif/encoder.ts`) and `runTargetSizeSearch`
+  (`src/core/optimization/targetSizeSearch.ts`) are now `async`
+  (`Promise`-returning) instead of synchronous. Their only unit-test
+  caller, `encoder.test.ts`, updated to `await` each call (and the
+  zero-frames rejection test changed from `expect(() => ...).toThrow()` to
+  `await expect(...).rejects.toThrow()`, since the function no longer
+  throws synchronously). `targetSizeSearch.test.ts` needed no changes — it
+  only exercises the pure `buildCandidateConfigs`/`applyFrameStep` helpers.
+
+### Added
+
+* `e2e/optimize.spec.ts`: a new test clicks Cancel ~300ms into a real
+  ~8-second target-size search and asserts no red failed-job toast, no
+  leftover "Encoding was cancelled." error text, the Run button reappears
+  promptly (not stuck showing "Cancel"), the worker is still usable for a
+  follow-up run afterward, and zero unhandled `pageerror` events fired.
+
+### Verified
+
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`: clean.
+* `npx vitest run`: 64/64 passed.
+* `npm run build`: succeeds, bundle sizes effectively unchanged.
+* `npx playwright test --project=chromium`: 27/27 (up from 26). The new
+  cancel test itself dropped from timing out (previously waited the full
+  operation to completion) to 3.0s once the fix landed — direct evidence
+  cancellation is now actually responsive, not just passing coincidentally.
+* `npx playwright test --project=firefox`: 27/27.
+* `npx playwright test --project=webkit`: 18 passed + 9 skipped (the new
+  cancel test skips there too, same OffscreenCanvas reason as the rest of
+  this suite).
+
+### Known Issues
+
+* `ExportPanel`'s identical cancel-state fix was not separately
+  e2e-tested: a plain export of this repo's committed fixtures completes
+  in well under a second, too fast to reliably intercept mid-flight
+  without introducing e2e flakiness. It shares the exact same
+  `renderAllFrames`/`encodeGif` code path already proven end-to-end by the
+  optimize cancel test above, and is typecheck/lint/unit-test clean, but a
+  dedicated live reproduction of *this specific panel's* cancel button was
+  not constructed. Worth revisiting if a large committed fixture ever
+  becomes available for e2e use.
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: added bug #9 with the full root-cause
+  and fix account above.
+
+### Git
+
+* One commit (`fix(worker): cancel actually stops in-progress
+  export/optimize instead of running to completion`), authored as the
+  repository's configured identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD`.
