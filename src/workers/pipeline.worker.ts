@@ -13,6 +13,22 @@ const offscreenCanvasFactory: CanvasFactory = {
   create: (width, height) => new OffscreenCanvas(width, height),
 }
 
+// Some browser engines (observed: the WebKit build used for this project's Playwright
+// cross-browser tests) don't implement OffscreenCanvas at all, in any context — real
+// current Safari's support was not independently verified. Everything that needs
+// pixel-level rendering (export, optimize, static-frame export, thumbnails, and
+// preview-bitmap downscaling) depends on it, so fail fast with a clear message instead
+// of the opaque native "Can't find variable: OffscreenCanvas" ReferenceError.
+const OFFSCREEN_CANVAS_SUPPORTED = typeof OffscreenCanvas !== 'undefined'
+
+function assertOffscreenCanvasSupport(): void {
+  if (!OFFSCREEN_CANVAS_SUPPORTED) {
+    throw new Error(
+      'Your browser does not support OffscreenCanvas, which GifForge requires for rendering, exporting, and optimizing GIFs. Please try a recent version of Chrome, Edge, or Firefox.',
+    )
+  }
+}
+
 const MEMORY_HARD_CAP_BYTES = 2 * 1024 * 1024 * 1024 // 2GB decoded RGBA — refuse above this
 const MEMORY_WARN_BYTES = 300 * 1024 * 1024 // 300MB decoded RGBA — suggest Performance Mode
 
@@ -70,7 +86,11 @@ class GifPipeline {
   async getPreviewBitmaps(maxDimension: number): Promise<ImageBitmap[]> {
     this.assertLoaded()
     const { width, height } = this.metadata!
-    const scale = Math.min(1, maxDimension / Math.max(width, height))
+    // Without OffscreenCanvas there's no way to downscale here — fall back to
+    // full-resolution preview bitmaps rather than failing outright. Costs more memory
+    // for the preview, but keeps upload/decode/playback/timeline usable; only the
+    // OffscreenCanvas-dependent export/optimize/thumbnail paths need to hard-fail.
+    const scale = OFFSCREEN_CANVAS_SUPPORTED ? Math.min(1, maxDimension / Math.max(width, height)) : 1
     const targetW = Math.max(1, Math.round(width * scale))
     const targetH = Math.max(1, Math.round(height * scale))
 
@@ -97,6 +117,15 @@ class GifPipeline {
     const frame = this.sourceFrames[frameIndex]
     if (!frame) throw new Error(`Frame ${frameIndex} does not exist.`)
     const { width, height } = this.metadata!
+
+    if (!OFFSCREEN_CANVAS_SUPPORTED) {
+      // No downscaling available — a full-resolution thumbnail costs more memory per
+      // timeline entry than intended, but still lets the timeline show real content
+      // instead of failing every frame's thumbnail request.
+      const bitmap = await createImageBitmap(new ImageData(frame.rgba, width, height))
+      return Comlink.transfer(bitmap, [bitmap])
+    }
+
     const scale = Math.min(1, maxSize / Math.max(width, height))
     const targetW = Math.max(1, Math.round(width * scale))
     const targetH = Math.max(1, Math.round(height * scale))
@@ -139,6 +168,7 @@ class GifPipeline {
     totalFrames: number,
   ): ImageData {
     this.assertLoaded()
+    assertOffscreenCanvasSupport()
     const { width, height } = this.metadata!
     // Project.layers is stored top-of-panel-first (index 0 = frontmost, matching the Layers
     // panel and standard design-tool convention), but the draw loop needs bottom-to-top order.
