@@ -343,7 +343,7 @@ status" below for exactly what was checked.
 - **Typecheck**: `npx tsc -b` — clean, zero errors.
 - **Lint**: `npx eslint . --ext ts,tsx` — clean, zero errors/warnings.
 - **Production build**: `npm run build` — succeeds.
-- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 30
+- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 31
   persisted tests across 6 files, actually part of this repository (unlike
   prior sessions' ad hoc scratch scripts — see `docs/PROGRESS.md`'s
   2026-09-04 20:13 entry). Each real-browser-only regression case earlier
@@ -359,9 +359,9 @@ status" below for exactly what was checked.
 
   | Browser  | Passed | Skipped | Failed | Notes |
   |----------|-------:|--------:|-------:|-------|
-  | Chromium | 30/30  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
-  | Firefox  | 30/30  | 0       | 0      | Run manually this session; not in CI |
-  | WebKit   | 18/30  | 12      | 0      | 12 tests skip with an explicit reason: export/optimize/static-frame-export/before-after-compare need OffscreenCanvas, unavailable in this WebKit build (see "Known Limitations") |
+  | Chromium | 31/31  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
+  | Firefox  | 31/31  | 0       | 0      | Run manually this session; not in CI |
+  | WebKit   | 18/31  | 13      | 0      | 13 tests skip with an explicit reason: export/optimize/static-frame-export/before-after-compare need OffscreenCanvas, unavailable in this WebKit build (see "Known Limitations") |
 
   "TESTED" below means an assertion in this table or in `e2e/` actually ran
   and passed against that engine this session — not inferred or assumed.

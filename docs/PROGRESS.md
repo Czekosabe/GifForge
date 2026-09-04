@@ -700,3 +700,58 @@ Optimize, not just numbers.
   the git log for exact hashes/messages.
 * No remote configured (`git remote -v` empty at both start and end of
   session) — commits remain local, consistent with every prior session.
+
+---
+
+## 2026-09-04 22:11 — Closed two real gaps in the Before/After feature's own test coverage
+
+Continued auditing the just-shipped visual comparison rather than treating
+the previous entry's verification as final — two scenarios the earlier
+tests didn't actually exercise.
+
+### Verified (live, via throwaway probe scripts before committing anything)
+
+* **Differing frame counts in animated playback**: the comparison's design
+  (each side independently clocked, wrapping at its own frame count) had
+  only ever been exercised against presets that don't change frame count.
+  Ran a real target-size search (44→22 frames via frame-rate reduction)
+  and watched the live comparison: both sides report identical 4.0s
+  durations (confirms `applyFrameStep`'s duration-preservation holds all
+  the way through to playback, not just at encode time) and 3 seconds of
+  real animated playback produced zero page errors.
+* **"Reset to original" invalidation**: stale-result invalidation had only
+  been verified against New Project. Confirmed live that Reset to original
+  — a distinct real action that also produces a new `Project` reference —
+  correctly clears a previously-shown comparison too.
+
+### Added
+
+* `e2e/before-after-compare.spec.ts`: a new permanent test for the
+  Reset-to-original case (the frame-count case wasn't promoted to a
+  permanent test — the existing target-size search e2e test already
+  covers the encode-side behavior it depends on, and repeating a full
+  ~15s target-size search purely to re-watch 3 seconds of canvas playback
+  wasn't worth the added suite runtime for what a one-time live check
+  already confirmed).
+
+### Tests
+
+* `npx vitest run`: 64/64.
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`, `npm run build`: all clean.
+* `npx playwright test --project=chromium`: **31/31** (30 prior + 1 new).
+* `npx playwright test --project=firefox`: **31/31**.
+* `npx playwright test --project=webkit`: **18 passed + 13 skipped** (new
+  test skips there too, same OffscreenCanvas reason as the rest of the
+  optimize/export suite).
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: updated TEST STATUS counts (31 e2e
+  tests, updated Browser test results table) to the actual re-run numbers.
+
+### Git
+
+* One commit (`test: verify the comparison viewer against differing frame
+  counts and Reset to original`), authored as the repository's configured
+  identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD`.
