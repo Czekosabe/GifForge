@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampCustomBitrate, computeBitrate } from './bitrate'
+import { clampCustomBitrate, computeBitrate, resolveBitrate } from './bitrate'
 
 describe('computeBitrate', () => {
   it('scales with pixel throughput, not a single hard-coded value', () => {
@@ -44,5 +44,26 @@ describe('clampCustomBitrate', () => {
 
   it('passes through a value already in range', () => {
     expect(clampCustomBitrate(2_000_000)).toBe(2_000_000)
+  })
+})
+
+describe('resolveBitrate', () => {
+  it('falls back to computeBitrate when no custom bitrate is given', () => {
+    expect(resolveBitrate(null, 800, 800, 24, 'balanced')).toBe(computeBitrate(800, 800, 24, 'balanced'))
+  })
+
+  it('clamps an absurdly large custom bitrate instead of passing it through raw', () => {
+    // The exact regression this exists to prevent: a typo-sized value from the Advanced
+    // panel's unbounded number field (e.g. 500,000,000 kbps in bps) reaching the encoder
+    // unchecked.
+    expect(resolveBitrate(500_000_000_000, 800, 800, 24, 'balanced')).toBe(20_000_000)
+  })
+
+  it('clamps a custom bitrate below the sane minimum', () => {
+    expect(resolveBitrate(1000, 800, 800, 24, 'balanced')).toBe(200_000)
+  })
+
+  it('passes through an in-range custom bitrate unchanged', () => {
+    expect(resolveBitrate(3_000_000, 800, 800, 24, 'balanced')).toBe(3_000_000)
   })
 })

@@ -1,4 +1,4 @@
-import { computeBitrate } from './bitrate'
+import { resolveBitrate } from './bitrate'
 import { computeEvenDimensions } from './dimensions'
 import { computeFrameTimings, estimateEffectiveFps, totalDurationUs } from './timestamps'
 import type { VideoExportOptions, VideoExportResult } from './types'
@@ -46,7 +46,7 @@ export async function exportVideo(
   const { width: paddedWidth, height: paddedHeight, padded } = computeEvenDimensions(width, height)
   const delaysMs = frames.map((f) => f.delayMs)
   const effectiveFps = estimateEffectiveFps(delaysMs)
-  const bitrate = options.customBitrate ?? computeBitrate(paddedWidth, paddedHeight, effectiveFps, options.quality)
+  const bitrate = resolveBitrate(options.customBitrate, paddedWidth, paddedHeight, effectiveFps, options.quality)
   const quality = new Quality({ bitrate })
 
   // Authoritative right before committing to a codec — never assumes an earlier UI-side

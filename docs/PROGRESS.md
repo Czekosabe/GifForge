@@ -1219,3 +1219,48 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
   for video export`), authored as the repository's configured identity,
   no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD`.
+
+## 2026-09-05 01:14 — Fixed a real bug: custom video-export bitrate was never actually clamped
+
+### Audit
+
+* Continuing the post-video-export audit cycle, re-read `exportVideo.ts`'s
+  bitrate selection and found `options.customBitrate ?? computeBitrate(...)`
+  — the already-written, already-unit-tested `clampCustomBitrate` in
+  `bitrate.ts` was never actually called. The Advanced panel's bitrate
+  number field (`ExportPanel.tsx`) has no upper bound, so a user-typed
+  extreme value would reach the real encoder's `Quality` config completely
+  unchecked. No test exercised the custom-bitrate field before this.
+
+### Fix
+
+* Tried an e2e test first (fill an extreme bitrate, export, check size/
+  errors) — it passed identically with the bug present or fixed, because a
+  real Chromium `VideoEncoder` tolerates an absurd bitrate hint silently
+  for near-static test content rather than erroring or visibly changing
+  output size. Confirmed this by deliberately reverting the fix and
+  re-running the test: still passed, so it gave no real signal and was
+  discarded rather than kept as false reassurance.
+* Fixed by extracting the selection logic into a pure function,
+  `resolveBitrate(customBitrate, width, height, effectiveFps, preset)`, in
+  `bitrate.ts` — `exportVideo.ts` now calls it instead of inlining the
+  `??`. Added 4 new unit tests to `bitrate.test.ts`, including the exact
+  500 Gbps-in-bps regression case, which is what actually verifies the
+  wiring (a fast, reliable unit test, unlike the abandoned e2e attempt).
+* Full verification: `npm run typecheck` clean, `npm run lint` clean,
+  `npm test` 100/100 passing (up from 96), full `video-export.spec.ts`
+  suite re-run on Chromium (9/9 passing, unchanged).
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: added bug #12 to "Bugs found and
+  fixed" with the full investigation (including the abandoned e2e
+  approach, recorded honestly rather than silently dropped), updated the
+  unit test count/description in TEST STATUS.
+
+### Git
+
+* One commit (`fix: actually wire the custom video-export bitrate clamp
+  into the encode path`), authored as the repository's configured
+  identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD`.

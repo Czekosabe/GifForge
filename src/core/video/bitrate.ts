@@ -26,3 +26,21 @@ export function computeBitrate(width: number, height: number, effectiveFps: numb
 export function clampCustomBitrate(bitrate: number): number {
   return Math.round(Math.min(MAX_BITRATE, Math.max(MIN_BITRATE, bitrate)))
 }
+
+/**
+ * The single source of truth for which bitrate an export actually uses — a user-supplied
+ * custom value (always clamped, since it comes from a free-typed number field with no upper
+ * bound) or the computed estimate. Exists as its own pure, tested function specifically so
+ * "is the clamp actually wired into the real export path" is a fast unit-test question rather
+ * than something only a real encoder run could reveal (which it turned out not to reliably
+ * reveal at all — real encoders tolerate an absurd bitrate hint silently).
+ */
+export function resolveBitrate(
+  customBitrate: number | null,
+  width: number,
+  height: number,
+  effectiveFps: number,
+  preset: VideoQualityPreset,
+): number {
+  return customBitrate !== null ? clampCustomBitrate(customBitrate) : computeBitrate(width, height, effectiveFps, preset)
+}

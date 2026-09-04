@@ -488,7 +488,7 @@ status" below for exactly what was checked.
 
 # TEST STATUS
 
-- **Unit tests**: 96 passing (`npx vitest run`), 11 files — frame-range
+- **Unit tests**: 100 passing (`npx vitest run`), 11 files — frame-range
   parsing, coordinate math, crop/resize/rotate math, frame-order
   edit operations, the GIF disposal compositor (all 4 disposal types +
   transparency), target-size search config ordering (including two
@@ -499,10 +499,13 @@ status" below for exactly what was checked.
   viewport geometry (`beforeAfterViewport.test.ts`, 10 tests — fit-scale
   math, pan clamping, and the "same normalized region maps correctly onto
   two differently-sized sources" linked-navigation guarantee), and video
-  export's pure logic (22 tests across `timestamps.test.ts`,
+  export's pure logic (26 tests across `timestamps.test.ts`,
   `bitrate.test.ts`, `dimensions.test.ts` — variable-delay-to-timestamp
   conversion with no compounding rounding drift, bitrate scaling with
-  dimensions/fps/preset and its clamps, and even-dimension padding
+  dimensions/fps/preset and its clamps, `resolveBitrate`'s custom-vs-
+  computed selection (added after discovering `clampCustomBitrate` existed
+  and was tested but was never actually called from the real export
+  path — see "Bugs found and fixed" #12 below), and even-dimension padding
   including the exact 401×301 case from this session's own spec).
 - **Typecheck**: `npx tsc -b` — clean, zero errors.
 - **Lint**: `npx eslint . --ext ts,tsx` — clean, zero errors/warnings.
@@ -737,6 +740,29 @@ status" below for exactly what was checked.
     triggers New Project mid-run, and confirms the toast disappears
     immediately and stays gone 9+ seconds later (ruling out a delayed
     progress callback resurrecting it).
+12. **A custom video-export bitrate was never actually clamped**:
+    `bitrate.ts`'s `clampCustomBitrate` (min 200kbps, max 20Mbps) was
+    written and unit-tested from the start, but `exportVideo.ts` used
+    `options.customBitrate ?? computeBitrate(...)` directly — the custom
+    value, when present, reached `mediabunny`'s `Quality` config completely
+    unclamped, even though the Advanced panel's number field
+    (`ExportPanel.tsx`) has no upper bound of its own. A typo like an extra
+    couple of zeros in the kbps field would hand the real encoder an absurd
+    target bitrate. Found by re-reading the export path during a routine
+    audit, not by a failing test — no test exercised the custom-bitrate
+    field at all before this. An e2e test was attempted first (fill the
+    field with an extreme value, export, check the file size/for errors)
+    but it passed identically whether the clamp was wired in or not: a
+    real Chromium `VideoEncoder` tolerates an absurd bitrate hint silently
+    rather than erroring or visibly inflating output for near-static test
+    content, so it gave no real signal either way — discovered by
+    deliberately reverting the fix and re-running that test, which still
+    passed. Fixed properly by extracting the selection logic into its own
+    pure function, `resolveBitrate` (customBitrate → `clampCustomBitrate`,
+    else → `computeBitrate`), used by `exportVideo.ts` and covered directly
+    by 4 new fast unit tests in `bitrate.test.ts` — including the exact
+    500 Gbps-in-bps regression case — which is what actually verifies the
+    wiring, unlike the abandoned e2e attempt.
 
 ## Verification rounds
 
