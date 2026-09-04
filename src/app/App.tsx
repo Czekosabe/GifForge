@@ -5,6 +5,7 @@ import { LeftToolbar } from '../components/LeftToolbar'
 import { RightInspector } from '../components/RightInspector'
 import { Timeline } from '../components/Timeline'
 import { JobStatusBar } from '../components/JobStatusBar'
+import { StorageHealthBanner } from '../components/StorageHealthBanner'
 import { CanvasToolbar } from '../editor/CanvasToolbar'
 import { UploadScreen } from './UploadScreen'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
@@ -81,6 +82,7 @@ export default function App() {
       )}
 
       <JobStatusBar />
+      <StorageHealthBanner />
     </div>
   )
 }

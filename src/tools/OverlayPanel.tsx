@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { useProjectStore } from '../state/projectStore'
 import { useEditorStore } from '../state/editorStore'
 import { useFrameCacheStore } from '../state/frameCacheStore'
+import { useStorageHealthStore } from '../state/storageHealthStore'
 import { getPipeline } from '../workers/client'
 import { saveAsset, deleteAsset } from '../storage/db'
 import { nanoid } from '../utils/nanoid'
@@ -41,9 +42,12 @@ export function OverlayPanel() {
     // Persisting to IndexedDB (for autosave restore) is best-effort: if it fails, the
     // overlay should still work for the rest of this session, it just won't survive a
     // reload. Don't let a storage error block the user from using the layer at all.
-    saveAsset(assetId, file, file.name).catch((err) => {
-      console.warn('Failed to persist overlay asset for autosave restore:', err)
-    })
+    saveAsset(assetId, file, file.name)
+      .then(() => useStorageHealthStore.getState().reportSuccess())
+      .catch((err) => {
+        console.warn('Failed to persist overlay asset for autosave restore:', err)
+        useStorageHealthStore.getState().reportFailure()
+      })
     await getPipeline().registerAsset(assetId, bitmap)
 
     const sourceW = project.metadata.sourceWidth

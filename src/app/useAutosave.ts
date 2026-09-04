@@ -3,6 +3,7 @@ import { useProjectStore } from '../state/projectStore'
 import { useFrameCacheStore } from '../state/frameCacheStore'
 import { usePlaybackStore } from '../state/playbackStore'
 import { useEditorStore } from '../state/editorStore'
+import { useStorageHealthStore } from '../state/storageHealthStore'
 import { getPipeline } from '../workers/client'
 import {
   clearProjectAutosave,
@@ -25,9 +26,12 @@ export function useAutosave() {
     if (!project || !sourceBlob) return
     if (timeoutRef.current) clearTimeout(timeoutRef.current)
     timeoutRef.current = setTimeout(() => {
-      saveProjectAutosave(project, sourceBlob).catch((err) => {
-        if (err instanceof StorageError) console.warn(err.message)
-      })
+      saveProjectAutosave(project, sourceBlob)
+        .then(() => useStorageHealthStore.getState().reportSuccess())
+        .catch((err) => {
+          if (err instanceof StorageError) console.warn(err.message)
+          useStorageHealthStore.getState().reportFailure()
+        })
     }, AUTOSAVE_DEBOUNCE_MS)
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current)
@@ -45,7 +49,13 @@ export function useAutosaveRestore() {
       .then((stored) => {
         if (stored) setPending(stored)
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (err instanceof StorageError) console.warn(err.message)
+        // A failure reading the existing autosave is at least as strong a signal of a real
+        // storage problem as a later write failure — surface it the same way rather than
+        // waiting for the first debounced save to (also) discover it.
+        useStorageHealthStore.getState().reportFailure()
+      })
   }, [])
 
   async function restore() {
