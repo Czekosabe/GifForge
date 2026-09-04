@@ -467,6 +467,35 @@ status" below for exactly what was checked.
    in well under a second, too fast to reliably intercept mid-flight
    without flaky timing — it shares the exact same `renderAllFrames`/
    `encodeGif` code path already proven by the optimize test.
+10. **Overlapping export/optimize jobs could race and cancel the wrong
+    one**: nothing in the UI (`LeftToolbar.tsx`) stops a user from
+    switching tools mid-job and starting a *second* heavy operation while
+    one is already running — export and optimize share a single worker
+    instance and a single `abortController` field. Concretely: start an
+    export, switch to Optimize before it finishes, start a target-size
+    search — after bug #9's fix made both operations genuinely
+    interleave (each yields periodically), the second call's
+    `this.abortController = new AbortController()` silently overwrote the
+    first job's controller. Clicking Cancel on either job would then abort
+    whichever one started most recently, not the one intended, and
+    `renderAllFrames`'s abort check (`this.abortController?.signal.aborted`
+    — reading the live field rather than a signal captured at that
+    operation's start) could observe the *other* job's cancellation
+    entirely. Separately, `abortController` was only ever reset to `null`
+    on the success path, never in a `finally`, so it stayed stale after any
+    cancellation or real error until the next call happened to overwrite
+    it. Found while double-checking bug #9's fix for exactly this kind of
+    reachable edge case, not by accident. Fixed by giving `exportGif`/
+    `optimize` a proper in-flight guard: each throws a clear "Another
+    export or optimization is already running." error if
+    `this.abortController` is already set at entry, and both now reset it
+    in a `finally` block so the guard reliably releases once an operation
+    ends, however it ends. Verified live: a new e2e test starts a real ~8s
+    target-size search, switches tools, and clicks Export mid-search —
+    confirms the clear rejection message appears (not a silent race or a
+    stuck UI) and that a fresh optimization still completes normally
+    afterward, proving the guard actually releases rather than getting
+    permanently stuck.
 
 ## Verification rounds
 

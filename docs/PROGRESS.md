@@ -460,3 +460,59 @@ jobs, and it turned out not to work.
   export/optimize instead of running to completion`), authored as the
   repository's configured identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD`.
+
+---
+
+## 2026-09-04 21:06 — Real bug: overlapping export/optimize jobs could race
+
+While double-checking the previous entry's fix for other reachable edge
+cases (not by accident): once export and optimize genuinely interleave in
+the worker (a direct consequence of bug #9's yielding fix), nothing stops
+a user from switching tools mid-job and starting a *second* heavy
+operation — `LeftToolbar.tsx` only disables tool buttons when no project
+is loaded, never based on job state.
+
+### Fixed
+
+* **Bug #10** (`docs/IMPLEMENTATION_STATUS.md`): export and optimize share
+  one worker instance and one `abortController` field. Starting a second
+  job while the first is still running silently overwrote that field, so
+  Cancel would abort whichever job started most recently rather than the
+  one the user meant, and `renderAllFrames`'s abort check (reading the
+  live field, not a signal captured at that operation's own start) could
+  observe the *other* job's cancellation. `abortController` was also only
+  ever reset on the success path, never in a `finally`, leaving it stale
+  after any cancellation or error. Fixed with a proper in-flight guard in
+  both `exportGif` and `optimize`: throw a clear "Another export or
+  optimization is already running." error if one is already in flight,
+  and reset the controller in a `finally` so the guard always releases.
+
+### Added
+
+* `e2e/resilience.spec.ts`: starts a real ~8s target-size search, switches
+  to the Export tool mid-search, clicks Export GIF, and asserts the clear
+  rejection message appears (not a silent race or stuck UI). Then waits
+  for the background search to finish and runs a *fresh* optimization to
+  confirm the guard actually released afterward, not just that it blocked
+  the second call.
+
+### Verified
+
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`, `npx vitest run` (64/64),
+  `npm run build`: all clean.
+* `npx playwright test --project=chromium`: 28/28 (up from 27).
+* `npx playwright test --project=firefox`: 28/28.
+* `npx playwright test --project=webkit`: 18 passed + 10 skipped (new test
+  skips there too, same OffscreenCanvas reason as the rest of this suite).
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: added bug #10 with the full root-cause
+  and fix account.
+
+### Git
+
+* One commit (`fix(worker): guard against overlapping export/optimize
+  jobs on the shared worker`), authored as the repository's configured
+  identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD`.
