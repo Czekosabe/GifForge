@@ -1182,3 +1182,40 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
 * One commit (`docs: record a stress-test flake investigation for video
   export`), authored as the repository's configured identity, no AI
   attribution — verified via `git show -s --format="%an <%ae>" HEAD`.
+
+## 2026-09-05 01:07 — Documented an unverified CI-environment codec-support gap for video export
+
+### Audit
+
+* Continuing the post-video-export audit cycle, checked whether the
+  WebM/VP9 codec support verified locally (Windows, Chromium/Firefox)
+  can be assumed to hold in the actual CI environment. Confirmed via
+  `.github/workflows/ci.yml` that both CI jobs run on `ubuntu-latest`
+  with Node 22 — a different OS/browser build than anything tested this
+  session.
+* No mechanism exists in this environment to directly trigger or inspect
+  a real GitHub Actions run, so this could not be verified, only
+  reasoned about: VP9 is an open, royalty-free codec with a bundled
+  software encoder (libvpx) built into Chromium/Firefox, giving
+  reasonable expectation (not confirmation) that it behaves the same on
+  Linux CI as observed locally — unlike H.264, which is more plausibly
+  hardware-gated.
+* Noted that the new video-export e2e tests are capability-aware
+  (`isFormatAvailable()` + `test.skip()`), so a CI environment lacking
+  VP9 encode would surface as extra skips, not red failures — meaning a
+  silent loss of regression coverage is possible without anyone noticing
+  unless the skip counts are checked.
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: added a Known Limitations entry
+  recording this as an honestly unverified gap (not asserted either way),
+  with a concrete next step (check an actual CI run's e2e report for
+  unexpected video-export skip counts).
+
+### Git
+
+* One commit (`docs: record unverified CI-environment codec support gap
+  for video export`), authored as the repository's configured identity,
+  no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD`.

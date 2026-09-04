@@ -414,6 +414,22 @@ status" below for exactly what was checked.
   repeated real video-encoder allocation) rather than a confirmed
   application bug — no code change was made without a reproducible lead
   to fix. Revisit if it recurs with an actual error signal attached.
+- **WebM/VP9 codec support has only been verified on this local Windows
+  development machine's browsers** (Chromium, Firefox — both available;
+  WebKit — unavailable), **not inside the actual CI environment**
+  (`.github/workflows/ci.yml` runs both jobs on `ubuntu-latest`, Playwright
+  Chromium only). VP9 is an open, royalty-free codec with a bundled
+  software encoder (libvpx) built into Chromium/Firefox, so there is
+  reasonable expectation it behaves the same on Linux as it does here —
+  unlike H.264, which is more plausibly hardware-gated — but this project
+  has no mechanism to directly trigger or inspect a real GitHub Actions
+  run, so that expectation has not been independently confirmed. The new
+  video-export e2e tests are capability-aware (`isFormatAvailable()` +
+  `test.skip()`), so a CI environment lacking VP9 encode would only show
+  as additional skips, not red failures — but that would also mean the
+  video-export feature has zero actual regression coverage in CI, which
+  would be worth noticing if it happens. Revisit by checking an actual
+  CI run's e2e report for unexpected video-export skip counts.
 
 # TECHNICAL DECISIONS
 
