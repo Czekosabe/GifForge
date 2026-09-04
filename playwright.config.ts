@@ -25,10 +25,14 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },
+  // All three engines run by default (`npm run test:e2e`) so cross-browser issues are
+  // caught locally before a push — CI restricts to chromium for fast PR feedback
+  // (`npm run test:e2e -- --project=chromium`) and firefox/webkit are run periodically
+  // rather than on every PR. See docs/IMPLEMENTATION_STATUS.md for the last verified
+  // pass/fail results per browser.
   projects: [
-    {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
-    },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
 })

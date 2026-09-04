@@ -37,3 +37,6 @@ blob-report
 
 # Claude Code local project config (session-specific, not project source)
 .claude
+
+# Generated stress-test fixtures (large, reproducible via scripts/generate-stress-fixture.cjs)
+fixtures-stress*.gif

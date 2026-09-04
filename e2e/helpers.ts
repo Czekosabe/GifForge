@@ -11,6 +11,19 @@ export const ROTATING_EARTH_GIF = path.join(FIXTURES_DIR, 'rotating-earth.gif') 
 export const OVERLAY_RED_PNG = path.join(FIXTURES_DIR, 'test-overlay-red.png')
 export const OVERLAY_BLUE_PNG = path.join(FIXTURES_DIR, 'test-overlay-blue.png')
 
+/**
+ * The WebKit build used by this project's Playwright tests does not implement
+ * OffscreenCanvas in any context (verified directly: `typeof OffscreenCanvas` is
+ * `undefined` on both the main thread and inside a Worker) — real, current Safari's
+ * support was not independently verified. GifForge's worker detects this and fails
+ * fast with a clear message (see `assertOffscreenCanvasSupport` in
+ * `pipeline.worker.ts`) rather than crashing, but any test that exercises
+ * export/optimize/static-frame-export genuinely cannot pass in this environment, so
+ * it should skip with a reason instead of failing red for a known, external cause.
+ */
+export const OFFSCREEN_CANVAS_UNSUPPORTED_REASON =
+  'The Playwright WebKit build used for this project has no OffscreenCanvas support (main thread or Worker), which GifForge requires for export/optimize/static-frame-export — see docs/IMPLEMENTATION_STATUS.md.'
+
 export interface DecodedGifFile {
   width: number
   height: number

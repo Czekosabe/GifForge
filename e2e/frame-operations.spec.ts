@@ -1,8 +1,16 @@
 import { test, expect } from '@playwright/test'
-import { decodeGifFile, LOADING_ICON_GIF, frameCounterLocator, stageHasVisibleContent, uploadGif } from './helpers'
+import {
+  decodeGifFile,
+  LOADING_ICON_GIF,
+  OFFSCREEN_CANVAS_UNSUPPORTED_REASON,
+  frameCounterLocator,
+  stageHasVisibleContent,
+  uploadGif,
+} from './helpers'
 
 test.describe('frame operations', () => {
-  test('reverse genuinely rewrites frame order in the exported file, not just the preview', async ({ page }) => {
+  test('reverse genuinely rewrites frame order in the exported file, not just the preview', async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
     await uploadGif(page, LOADING_ICON_GIF)
 
     await page.locator('button[title="Export"]').click()

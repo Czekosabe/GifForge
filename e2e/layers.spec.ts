@@ -1,5 +1,14 @@
 import { test, expect } from '@playwright/test'
-import { decodeGifFile, centerPixel, layerCanvasCenterPixel, LOADING_ICON_GIF, OVERLAY_BLUE_PNG, OVERLAY_RED_PNG, uploadGif } from './helpers'
+import {
+  decodeGifFile,
+  centerPixel,
+  layerCanvasCenterPixel,
+  LOADING_ICON_GIF,
+  OFFSCREEN_CANVAS_UNSUPPORTED_REASON,
+  OVERLAY_BLUE_PNG,
+  OVERLAY_RED_PNG,
+  uploadGif,
+} from './helpers'
 
 test.describe('layers', () => {
   test('adding a text layer paints real pixels onto the render canvas, not just an HTML overlay', async ({ page }) => {
@@ -37,7 +46,7 @@ test.describe('layers', () => {
     expect(a).toBeGreaterThan(100)
   })
 
-  test('layer z-order: later-added layers render on top, both live and in the real export (regression)', async ({ page }) => {
+  test('layer z-order (live preview): later-added layers render on top (regression)', async ({ page }) => {
     await uploadGif(page, LOADING_ICON_GIF)
     await page.locator('button[title="Overlay"]').click()
     await page.locator('input[type=file]').setInputFiles(OVERLAY_RED_PNG)
@@ -48,8 +57,21 @@ test.describe('layers', () => {
     const panelOrder = await page.locator('button', { hasText: /test-overlay/ }).allTextContents()
     expect(panelOrder[0]).toContain('blue')
 
-    const [, , bBefore] = await layerCanvasCenterPixel(page)
-    expect(bBefore).toBeGreaterThan(200) // blue on top
+    const [, , b] = await layerCanvasCenterPixel(page)
+    expect(b).toBeGreaterThan(200) // blue on top
+  })
+
+  test('layer z-order (export): later-added layers render on top in the real exported file (regression)', async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
+    await uploadGif(page, LOADING_ICON_GIF)
+    await page.locator('button[title="Overlay"]').click()
+    await page.locator('input[type=file]').setInputFiles(OVERLAY_RED_PNG)
+    await page.waitForTimeout(400)
+    await page.locator('input[type=file]').setInputFiles(OVERLAY_BLUE_PNG)
+    await page.waitForTimeout(400)
 
     await page.locator('button[title="Export"]').click()
     const downloadPromise = page.waitForEvent('download')
@@ -61,7 +83,7 @@ test.describe('layers', () => {
     expect(r).toBeLessThan(100)
   })
 
-  test('layer reorder: "Move up" brings a layer to the front, both live and in a real export (regression)', async ({ page }) => {
+  test('layer reorder (live preview): "Move up" brings a layer to the front (regression)', async ({ page }) => {
     await uploadGif(page, LOADING_ICON_GIF)
     await page.locator('button[title="Overlay"]').click()
     await page.locator('input[type=file]').setInputFiles(OVERLAY_RED_PNG)
@@ -76,8 +98,23 @@ test.describe('layers', () => {
     const panelOrder = await page.locator('button', { hasText: /test-overlay/ }).allTextContents()
     expect(panelOrder[0]).toContain('red')
 
-    const [rLive] = await layerCanvasCenterPixel(page)
-    expect(rLive).toBeGreaterThan(200) // red now on top, live
+    const [r] = await layerCanvasCenterPixel(page)
+    expect(r).toBeGreaterThan(200) // red now on top, live
+  })
+
+  test('layer reorder (export): "Move up" brings a layer to the front in the real exported file (regression)', async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
+    await uploadGif(page, LOADING_ICON_GIF)
+    await page.locator('button[title="Overlay"]').click()
+    await page.locator('input[type=file]').setInputFiles(OVERLAY_RED_PNG)
+    await page.waitForTimeout(400)
+    await page.locator('input[type=file]').setInputFiles(OVERLAY_BLUE_PNG)
+    await page.waitForTimeout(400)
+    await page.locator('button[title="Move up"]').nth(1).click()
+    await page.waitForTimeout(200)
 
     await page.locator('button[title="Export"]').click()
     const downloadPromise = page.waitForEvent('download')
@@ -89,7 +126,8 @@ test.describe('layers', () => {
     expect(b).toBeLessThan(100)
   })
 
-  test('deleting an overlay and adding a new one leaves no stale reference in the export', async ({ page }) => {
+  test('deleting an overlay and adding a new one leaves no stale reference in the export', async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
     await uploadGif(page, LOADING_ICON_GIF)
     await page.locator('button[title="Overlay"]').click()
     await page.locator('input[type=file]').setInputFiles(OVERLAY_RED_PNG)

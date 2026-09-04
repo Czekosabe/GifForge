@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
 import { statSync } from 'node:fs'
-import { decodeGifFile, LOADING_ICON_GIF, ROTATING_EARTH_GIF, uploadGif } from './helpers'
+import { decodeGifFile, LOADING_ICON_GIF, OFFSCREEN_CANVAS_UNSUPPORTED_REASON, ROTATING_EARTH_GIF, uploadGif } from './helpers'
 
 test.describe('optimization', () => {
-  test('running optimization produces a genuinely different, real encoded result', async ({ page }) => {
+  test('running optimization produces a genuinely different, real encoded result', async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
     await uploadGif(page, LOADING_ICON_GIF)
     const originalSize = statSync(LOADING_ICON_GIF).size
 
@@ -30,7 +31,9 @@ test.describe('optimization', () => {
 
   test('target-size search with every reduction flag enabled actually exercises frame-rate/resolution reduction, not just palette (regression)', async ({
     page,
+    browserName,
   }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
     test.slow() // this runs a real bounded search of up to ~18 real encodes on a 44-frame image
     await uploadGif(page, ROTATING_EARTH_GIF)
 

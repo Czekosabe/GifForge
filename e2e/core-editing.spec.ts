@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { decodeGifFile, LOADING_ICON_GIF, OVERLAY_RED_PNG, uploadGif } from './helpers'
+import { decodeGifFile, LOADING_ICON_GIF, OFFSCREEN_CANVAS_UNSUPPORTED_REASON, OVERLAY_RED_PNG, uploadGif } from './helpers'
 
 test.describe('core editing flow', () => {
   test('uploads a GIF, decodes it, and shows correct metadata', async ({ page }) => {
@@ -43,7 +43,11 @@ test.describe('core editing flow', () => {
     await expect(page.locator('text=Please choose a .gif file.').first()).toBeVisible({ timeout: 5_000 })
   })
 
-  test('exports a GIF that re-decodes with correct dimensions, frame count, and timing matching the source', async ({ page }) => {
+  test('exports a GIF that re-decodes with correct dimensions, frame count, and timing matching the source', async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
     await uploadGif(page, LOADING_ICON_GIF)
 
     await page.locator('button[title="Export"]').click()
@@ -71,7 +75,8 @@ test.describe('core editing flow', () => {
     await expect(widthField).toHaveValue('200')
   })
 
-  test('resize genuinely changes the output dimensions used by export, not just a UI label', async ({ page }) => {
+  test('resize genuinely changes the output dimensions used by export, not just a UI label', async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
     await uploadGif(page, LOADING_ICON_GIF)
     await page.locator('button[title="Resize"]').click()
     await page.locator('button:has-text("Percent")').click()
