@@ -1010,7 +1010,7 @@ Ranked by expected value given the current state — highest first:
    machine. A consumer laptop/desktop with a real GPU (Intel Quick Sync or
    equivalent) very likely *would* support it; this needs an actual run
    there, not further code changes, before MP4 can be marked DONE.
-2. **Get WebKit's 24 skipped tests passing**, if real Safari/WebKit support
+2. **Get WebKit's 25 skipped tests passing**, if real Safari/WebKit support
    turns out to matter for the target audience. Requires either confirming
    real Safari *does* support OffscreenCanvas (in which case the gap is
    specific to Playwright's bundled WebKit test build, not a real product

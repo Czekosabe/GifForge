@@ -1404,3 +1404,39 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
   limit instead of silently corrupting output`), authored as the
   repository's configured identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD`.
+
+## 2026-09-05 01:47 — Full-suite re-verification pass; fixed one stale doc figure
+
+### Verification
+
+* Before declaring the last four fixes' cycle genuinely finished, ran a
+  complete fresh check rather than re-asserting confidence: `typecheck`
+  clean, `lint` clean, `npm test` 106/106, and the full `e2e/` suite
+  (all 9 files) on all three engines: Chromium 45/45, Firefox 45/45,
+  WebKit 20/45 passed + 25 skipped + 0 failed — matching the documented
+  baseline exactly, confirming none of today's four fixes regressed
+  anything.
+* Ran a fresh production build and cross-checked `dist/assets/` byte-for-
+  byte against the documented lazy-loading architecture: mediabunny's two
+  real chunks (208.52KB full encode/mux path, 16.14KB capability-check-
+  only path) match the previously-documented ~211KB/~17KB figures almost
+  exactly, confirmed absent from `index.html`'s own script/preload tags
+  (genuinely lazy, not eagerly bundled) — an initial concern that the
+  ~211KB chunk had "gone missing" turned out to be Vite's generic
+  "index-*.js" naming for anonymous dynamic chunks, not a real
+  regression.
+* Found one real inconsistency while cross-checking: `docs/
+  IMPLEMENTATION_STATUS.md`'s "NEXT PRIORITIES" #2 said "WebKit's 24
+  skipped tests" while the test-results table (and this session's actual
+  live run) both say 25. Fixed the stale figure.
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: corrected "24" to "25" in NEXT
+  PRIORITIES #2.
+
+### Git
+
+* One commit (`docs: fix stale WebKit skipped-test count in NEXT
+  PRIORITIES`), authored as the repository's configured identity, no AI
+  attribution — verified via `git show -s --format="%an <%ae>" HEAD`.
