@@ -88,3 +88,60 @@ export async function stageHasVisibleContent(page: Page): Promise<boolean> {
     return false
   })
 }
+
+export interface DecodedVideoInfo {
+  videoWidth: number
+  videoHeight: number
+  duration: number
+}
+
+/**
+ * Loads a downloaded video file into a REAL `<video>` element (not just a byte-length check)
+ * to prove it's actually decodable/playable in this browser, then reports its real metadata.
+ * Reads the file from disk in Node (Playwright's own process) and hands it to the page as a
+ * Blob URL, since the download lives outside the page's own origin.
+ */
+export async function loadVideoMetadata(page: Page, filePath: string, mimeType: string): Promise<DecodedVideoInfo> {
+  const bytes = readFileSync(filePath)
+  const base64 = bytes.toString('base64')
+  return page.evaluate(
+    async ({ base64, mimeType }) => {
+      const binary = atob(base64)
+      const arr = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i)
+      const blob = new Blob([arr], { type: mimeType })
+      const url = URL.createObjectURL(blob)
+      const video = document.createElement('video')
+      video.src = url
+      video.muted = true
+      document.body.appendChild(video)
+      await new Promise<void>((resolve, reject) => {
+        video.addEventListener('loadedmetadata', () => resolve(), { once: true })
+        video.addEventListener('error', () => reject(new Error('video failed to load: ' + video.error?.message)), { once: true })
+        setTimeout(() => reject(new Error('timed out waiting for loadedmetadata')), 10_000)
+      })
+      return { videoWidth: video.videoWidth, videoHeight: video.videoHeight, duration: video.duration }
+    },
+    { base64, mimeType },
+  )
+}
+
+/** Seeks a video (already appended to the DOM by `loadVideoMetadata`, found by its blob src)
+ * to `timeSeconds` and returns the center-pixel RGBA drawn from that exact frame — for
+ * verifying the video's actual decoded content reflects a real project edit. */
+export async function videoCenterPixelAt(page: Page, timeSeconds: number): Promise<[number, number, number, number]> {
+  return page.evaluate(async (t) => {
+    const video = document.querySelector('video') as HTMLVideoElement
+    await video.play().catch(() => {})
+    video.pause()
+    video.currentTime = Math.min(t, video.duration - 0.01)
+    await new Promise((resolve) => video.addEventListener('seeked', resolve, { once: true }))
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(video, 0, 0)
+    const d = ctx.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data
+    return [d[0], d[1], d[2], d[3]] as [number, number, number, number]
+  }, timeSeconds)
+}

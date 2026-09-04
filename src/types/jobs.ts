@@ -7,6 +7,7 @@ export type JobType =
   | 'target-size'
   | 'encode'
   | 'export'
+  | 'export-video'
   | 'static-export'
 
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'

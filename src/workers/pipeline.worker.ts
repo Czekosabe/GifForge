@@ -9,6 +9,7 @@ import { isFrameVisible, parseFrameRange } from '../core/selection/frameRange'
 import { yieldToEventLoop } from '../core/util/yieldToEventLoop'
 import type { CompositedFrame, GifMetadata } from '../types/gif'
 import type { EditOperations, ExportSettings, Layer, OptimizationSettings } from '../types/project'
+import type { VideoExportOptions, VideoExportResult } from '../core/video/types'
 
 const offscreenCanvasFactory: CanvasFactory = {
   create: (width, height) => new OffscreenCanvas(width, height),
@@ -350,6 +351,54 @@ class GifPipeline {
 
       onProgress?.(1, 'Done')
       return Comlink.transfer(bytes, [bytes.buffer as ArrayBuffer])
+    } finally {
+      this.abortController = null
+    }
+  }
+
+  /**
+   * Video export shares this worker's heavy-job exclusivity guard and abortController with
+   * exportGif/optimize (same reasoning: one worker instance, one set of large frame buffers,
+   * so two heavy operations racing on that shared state is the exact bug bugs #9/#10 fixed
+   * for GIF export/optimize — extending that fix to a third operation, not bolting on a
+   * second independent lock). Reuses the same `renderAllFrames` GIF export uses, so video
+   * export reflects the exact same edits (crop/resize/rotate/speed/frame order/layers) — it
+   * never re-implements rendering. The actual encode/mux work is dynamically imported
+   * (`core/video/exportVideo.ts`, which itself dynamically imports mediabunny) only when this
+   * method is actually called, so GIF-only sessions never load any of it.
+   */
+  async exportVideo(
+    edits: EditOperations,
+    layers: Layer[],
+    options: VideoExportOptions,
+    onProgress?: ProgressCallback,
+  ): Promise<VideoExportResult> {
+    this.assertLoaded()
+    if (this.abortController) {
+      throw new Error('Another export or optimization is already running. Cancel it or wait for it to finish first.')
+    }
+    this.abortController = new AbortController()
+    const signal = this.abortController.signal
+
+    try {
+      const frameRangeFrames =
+        options.frameRange.trim().length > 0 ? filterByFrameRange(edits, options.frameRange) : edits
+
+      onProgress?.(0, 'Rendering frames…')
+      const { rendered, width, height } = await this.renderAllFrames(frameRangeFrames, layers, (f, m) => onProgress?.((f ?? 0) * 0.3, m))
+
+      const scale = options.scalePercent / 100
+      const scaledWidth = Math.max(1, Math.round(width * scale))
+      const scaledHeight = Math.max(1, Math.round(height * scale))
+      const scaledFrames =
+        scale === 1
+          ? rendered
+          : rendered.map((f) => ({ delayMs: f.delayMs, rgba: this.scaleRgba(f.rgba, width, height, scaledWidth, scaledHeight) }))
+
+      const { exportVideo } = await import('../core/video/exportVideo')
+      const result = await exportVideo(scaledFrames, scaledWidth, scaledHeight, options, signal, (f, m) => onProgress?.(f === null ? null : 0.3 + f * 0.7, m))
+      onProgress?.(1, 'Done')
+      return { ...result, bytes: Comlink.transfer(result.bytes, [result.bytes.buffer as ArrayBuffer]) }
     } finally {
       this.abortController = null
     }
