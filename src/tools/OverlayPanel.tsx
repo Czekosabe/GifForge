@@ -38,7 +38,12 @@ export function OverlayPanel() {
     const assetId = nanoid()
     const bitmap = await createImageBitmap(file)
     setAssetBitmap(assetId, bitmap)
-    await saveAsset(assetId, file, file.name)
+    // Persisting to IndexedDB (for autosave restore) is best-effort: if it fails, the
+    // overlay should still work for the rest of this session, it just won't survive a
+    // reload. Don't let a storage error block the user from using the layer at all.
+    saveAsset(assetId, file, file.name).catch((err) => {
+      console.warn('Failed to persist overlay asset for autosave restore:', err)
+    })
     await getPipeline().registerAsset(assetId, bitmap)
 
     const sourceW = project.metadata.sourceWidth
