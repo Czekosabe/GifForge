@@ -15,10 +15,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "clsx": "^2.1.1",
     "comlink": "^4.4.2",
     "dexie": "^4.0.10",
-    "dexie-react-hooks": "^1.1.7",
     "gifenc": "^1.0.3",
     "gifuct-js": "^2.1.2",
     "konva": "^9.3.16",
