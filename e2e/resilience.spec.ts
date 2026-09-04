@@ -55,6 +55,37 @@ test.describe('resilience', () => {
     await expect(degreesField).toHaveValue('180')
   })
 
+  test('uploading a file with a corrupt GIF signature shows a clear error and leaves the app usable, no unhandled page errors', async ({
+    page,
+  }) => {
+    const pageErrors: string[] = []
+    page.on('pageerror', (err) => pageErrors.push(err.message))
+
+    await page.goto('/')
+    await page.waitForSelector('text=GifForge', { timeout: 15_000 })
+
+    // Named and MIME-typed as a GIF (passes the extension/MIME/size checks in
+    // useLoadGif's validateFile), but the content is garbage — this exercises the
+    // decoder's own signature check (GifDecodeError in src/core/gif/decoder.ts),
+    // not the upload-form validation, which unit tests already cover directly.
+    await page.locator('input[type=file]').setInputFiles({
+      name: 'corrupt.gif',
+      mimeType: 'image/gif',
+      buffer: Buffer.from('this is not a real gif file, just garbage bytes'),
+    })
+
+    await expect(page.locator('text=/not a valid GIF/i').first()).toBeVisible({ timeout: 10_000 })
+    // Must still be on the upload screen, not stuck in a perpetual loading spinner.
+    await expect(page.locator('button:has-text("Choose a GIF file")')).toBeVisible()
+
+    // The app must still be fully usable afterward — a real GIF loads normally.
+    await page.locator('input[type=file]').setInputFiles(LOADING_ICON_GIF)
+    await page.waitForSelector('button[title="Crop"]', { timeout: 30_000 })
+    await expect(page.locator('.h-9.shrink-0').first()).toContainText('24 frames')
+
+    expect(pageErrors).toEqual([])
+  })
+
   test('an unexpected render error is caught by the error boundary and shows a recovery screen, not a blank page', async ({
     page,
   }) => {

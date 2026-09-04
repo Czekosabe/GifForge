@@ -299,3 +299,75 @@ investigated properly this time.
   identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD` after committing, same as every
   prior commit this session.
+
+---
+
+## 2026-09-04 20:36 — Removed two unused dependencies
+
+Continued auditing rather than stopping after the previous entry.
+Checked every entry in `package.json` `dependencies` against actual usage
+with a repo-wide grep (not just `src/`) instead of assuming the dependency
+list was accurate.
+
+### Fixed
+
+* **`clsx` and `dexie-react-hooks`** were listed as direct dependencies
+  but never imported anywhere in the repository (`src/`, `e2e/`,
+  `scripts/`, or config files) — confirmed via
+  `grep -rln "clsx\|dexie-react-hooks" --include="*.ts" --include="*.tsx" .`
+  returning no matches outside `node_modules`. Removed both from
+  `package.json`; `npm install` dropped 2 packages, `npm audit` still
+  reports 0 vulnerabilities.
+
+### Verified
+
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`: clean.
+* `npx vitest run`: 64/64 passed.
+* `npm run build`: succeeds; output bundle byte sizes identical to the
+  pre-removal build (`index-Ddw6CwFn.js` 306.38 kB,
+  `EditorCanvas-_d1AelZr.js` 301.85 kB) — confirms neither package was
+  contributing to the shipped bundle even indirectly.
+
+### Git
+
+* One commit (`chore: remove unused clsx and dexie-react-hooks
+  dependencies`), authored as the repository's configured identity, no
+  AI attribution — verified via `git show -s --format="%an <%ae>" HEAD`.
+
+---
+
+## 2026-09-04 20:42 — Closed an untested error-handling path: corrupt GIF upload
+
+Checked `e2e/resilience.spec.ts` against `src/app/useLoadGif.ts` and
+`src/core/gif/decoder.ts`'s `GifDecodeError` cases. The decoder's signature/
+structure/dimension/frame-decode error paths were already unit-tested
+directly (`decoder.test.ts`), but nothing exercised the path a real user
+hits: dropping a bad file onto the actual running app and seeing what
+happens in a browser.
+
+### Added
+
+* `e2e/resilience.spec.ts`: new test uploads a file named and MIME-typed as
+  a `.gif` but containing garbage bytes (passes `useLoadGif`'s
+  extension/MIME/size validation, fails the decoder's own signature check).
+  Asserts: the exact "not a valid GIF" error renders, the app stays on the
+  upload screen (not stuck spinning), a real GIF can still be loaded
+  immediately afterward (app isn't left in a broken state), and zero
+  `pageerror` events fired (no unhandled exception reached the page).
+
+### Fixed
+
+* First run hit a `strict mode violation` — `text=/not a valid GIF/i`
+  matched both the persistent inline error `<p>` and a transient job-toast
+  with the same message. Same class of ambiguity as earlier selectors in
+  this suite; fixed with `.first()`.
+
+### Verified
+
+* `npx playwright test --project=chromium`: 26/26 (up from 25).
+* `npx playwright test --project=firefox`: 26/26.
+* `npx playwright test --project=webkit`: 18 passed + 8 skipped (new test
+  included in the pass count; skip count unchanged — this path doesn't
+  touch OffscreenCanvas).
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`, `npx vitest run` (64/64): all
+  clean afterward.
