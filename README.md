@@ -27,7 +27,9 @@ server.
 
 ## Development
 
-Requires Node.js 20+.
+Requires Node.js `^20.19.0` or `>=22.12.0` (Vite 7's minimum). Plain "Node
+20" or Node 22.0–22.11 will run with a warning but are not officially
+supported.
 
 ```bash
 npm install
