@@ -176,6 +176,105 @@ assumed:
 
 The next upload lazily spins up a fresh worker via `getPipeline()`.
 
+## Video export (MP4/WebM)
+
+The same edited project GIF export produces (crop/resize/rotate/speed/
+frame order/text/overlay layers) can also export as a real MP4 or WebM
+video file — additive to GIF export, not a rewrite of it: `exportVideo`
+(`pipeline.worker.ts`) calls the exact same private `renderAllFrames`
+`exportGif`/`optimize` already use, so video export can never drift from
+what GIF export renders. It shares their heavy-job-exclusivity guard too
+(same `this.abortController` check/`finally` reset) rather than adding a
+second lock — starting a video export while GIF export or Optimize is
+already running is rejected the same way a second GIF export or Optimize
+already was.
+
+**Native WebCodecs + mediabunny, not `ffmpeg.wasm`.** `VideoEncoder`
+(inside this worker) does the actual encoding; `mediabunny` (MPL-2.0 —
+see `docs/IMPLEMENTATION_STATUS.md`'s Technical Decisions for why an
+MPL-2.0 dependency was accepted) provides the MP4/WebM container muxing
+and a thin, consistent wrapper around `VideoEncoder`/`VideoFrame`.
+`ffmpeg.wasm` was deliberately not used — its ~65MB payload, separate
+worker model, and (for the fast build) `SharedArrayBuffer`/COOP-COEP
+requirement are all real costs this project isn't paying for a case
+native `VideoEncoder` already handles (see Technical Debt for the full
+evaluation).
+
+**Runtime codec probing, not assumed support.** Availability differs by
+browser and hardware, so `core/video/capabilities.ts` calls mediabunny's
+`canEncodeVideo('avc' | 'vp9' | 'vp8', { width, height, quality })` —
+itself a thin, consistently-keyed wrapper around
+`VideoEncoder.isConfigSupported` — rather than checking `"VideoEncoder" in
+window` and hoping. MP4 prefers H.264/AVC (the only broadly-viable
+MP4-compatible WebCodecs codec); WebM prefers VP9, falling back to VP8
+only if VP9 specifically is unavailable. When a format is unavailable,
+the Export panel disables it with a plain-language reason instead of
+attempting a broken export.
+
+**Lazy-loading boundary.** `core/video/exportVideo.ts` and
+`core/video/capabilities.ts` both dynamically `import('mediabunny')`
+internally — GIF-only sessions never load any of it. Capability
+checking (cheap, no frame data involved) runs on the **main thread**
+(triggered when the user selects the MP4/WebM format tab in the Export
+panel, not merely when the panel opens — opening Export to export a GIF,
+the far more common path, must not pay this cost); the actual heavy
+encode/mux work is dynamically imported **inside the worker** only when
+`exportVideo()` is actually called, keeping every large rendered frame
+buffer local to the one worker that already owns them (never transferred
+to a second worker). Verified against real build output, not assumed from
+the dynamic `import()` existing in source: the main entry bundle grew
+~9KB (from the new Export panel UI, not mediabunny), while mediabunny's
+own code sits in separate chunks (~17KB for capability-check-only, ~211KB
+for the full encode/mux path) that only load via those dynamic imports.
+
+**Timing model.** GIF frame delays are milliseconds and may vary per
+frame; video timestamps need integer microseconds. `core/video/
+timestamps.ts` (pure, unit tested) rounds each delay to whole
+microseconds once and accumulates timestamps from those already-rounded
+durations — never re-derived from an assumed constant frame rate, and
+bounded to sub-microsecond-per-frame error with no compounding drift over
+a long animation. This is deliberately its own isolated module: a
+too-similar class of bug (a 10x GIF playback-speed regression from
+double-applying a delay conversion) already shipped for real in this
+project once — see `docs/IMPLEMENTATION_STATUS.md` bug #1.
+
+**Frame creation and background compositing.** Each already-rendered RGBA
+frame (the same pixels GIF export encodes — never the downscaled/Konva
+interactive preview) is drawn onto a reused pair of `OffscreenCanvas`es:
+one holds the frame as-is, the other is filled with the user's chosen
+background color and then has the first `drawImage`'d onto it — `drawImage`
+alpha-composites, unlike `putImageData`, which would write a transparent
+GIF's alpha channel raw instead of blending it. `VideoSample`'s
+`CanvasImageSource` constructor snapshots the canvas's pixels immediately,
+so reusing (redrawing onto) the same two canvases across frames is safe
+and avoids allocating a new canvas pair per frame.
+
+**Even-dimension padding.** Some codecs (H.264 in particular) require
+even width/height. `core/video/dimensions.ts` (pure, unit tested) pads by
+at most 1px on the right/bottom — never rescales — so the real image
+stays undistorted at its native size; the Export panel tells the user
+when this happened and to what dimensions.
+
+**Backpressure and `VideoFrame`/resource lifecycle.** mediabunny's
+`VideoSampleSource.add()` returns a Promise that "resolves once the
+output is ready to receive more samples" per its own contract — awaiting
+it every frame *is* the backpressure handling; no manual
+`encodeQueueSize` polling is layered on top. Unlike GIF's fully
+synchronous encode loop (which needs an artificial `yieldToEventLoop()`
+call to let a queued cancel message through at all), this loop already
+yields for real on every frame via that same await, so a pending
+cancellation is naturally observed on the next iteration with no extra
+yield needed. Every `VideoSample` is `.close()`d in a `finally` right
+after `add()`; on cancellation or any error, `output.cancel()` releases
+the muxer/encoder before the error propagates.
+
+**No audio, and one loop cycle only.** Video export is video-only (GIF
+has no audio to preserve, and none is synthesized), and encodes exactly
+one animation cycle regardless of the GIF's configured loop count — GIF
+loop semantics ("play forever") don't map onto a normal video file, and
+duplicating the animation N times was deliberately out of scope for this
+phase.
+
 ## Coordinate system
 
 All layer/crop coordinates in `Project` are in **image space**: pixels of the

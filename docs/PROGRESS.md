@@ -931,3 +931,154 @@ fallback, per the session's own scope limits.
   4. (this documentation entry)
 * No remote configured (`git remote -v` empty at both start and end of
   session) — commits remain local, consistent with every prior session.
+
+---
+
+## 2026-09-05 00:39 — Native MP4/WebM video export
+
+The first substantial post-MVP capability: exporting the same edited
+project GIF export produces as a real MP4 or WebM video file. Additive to
+the existing GIF pipeline throughout — `renderAllFrames`, GIF
+quantization/timing/disposal handling, and target-size search were not
+touched.
+
+### Technical spike
+
+* Investigated the current environment before choosing an architecture,
+  per this session's brief, rather than assuming the suggested library.
+  Confirmed via `npm view`: `mediabunny` v1.55.7, published the same day
+  as this evaluation, MPL-2.0 licensed, effectively zero runtime
+  dependencies (two `@types/*` ambient packages only), real TypeScript
+  definitions (read directly from `node_modules/mediabunny/dist/modules/
+  src/*.d.ts` to derive this session's actual usage — `Output`,
+  `Mp4OutputFormat`/`WebMOutputFormat`, `BufferTarget`, `VideoSampleSource`,
+  `VideoSample`, `canEncodeVideo`, `Quality`), and the direct, actively-
+  recommended successor to the same author's older `mp4-muxer`/
+  `webm-muxer` — used the successor, not the packages it superseded.
+* Recorded the MPL-2.0 licensing decision explicitly (see
+  `docs/IMPLEMENTATION_STATUS.md`'s Technical Decisions) rather than
+  silently introducing a non-permissive dependency — MPL-2.0 permits
+  closed-source commercial use, and only mediabunny's own files carry it.
+* Evaluated `ffmpeg.wasm` as the task required, and deliberately did not
+  add it: `@ffmpeg/core` is ~65MB unpacked (checked via `npm view`, not
+  estimated), needs its own worker model that sits awkwardly against this
+  project's one-worker architecture, and its fast build requires
+  `SharedArrayBuffer`/COOP-COEP headers this project doesn't otherwise
+  need. Full reasoning recorded under Technical Debt.
+
+### Added
+
+* `src/core/video/` — `types.ts`, `timestamps.ts`, `bitrate.ts`,
+  `dimensions.ts` (all pure, unit tested — 22 new tests), `capabilities.ts`
+  (runtime codec probing via `canEncodeVideo`, dynamically imports
+  mediabunny), `exportVideo.ts` (the actual encode/mux, also dynamically
+  imported, only from inside the worker).
+* `pipeline.worker.ts`: new `exportVideo()` method, reusing the exact same
+  private `renderAllFrames` GIF export/optimize already call, and sharing
+  their existing heavy-job-exclusivity guard (same `abortController`
+  check/`finally` reset) rather than adding a second lock.
+* `ExportPanel.tsx`: a Format selector (GIF/MP4/WebM); GIF-only settings
+  (palette size, dithering, loop count) hidden when a video format is
+  selected. Video settings: quality preset (High Quality/Balanced/Small
+  File), output scale, background color (Black/White/Custom, composited
+  onto transparent pixels — video formats don't reliably support alpha),
+  and an Advanced custom-bitrate override. A capability badge per format
+  ("Available" / a plain-language reason why not), checked when the user
+  selects that format tab specifically — not merely when the Export panel
+  opens, so exporting a GIF (the far more common path) never loads any
+  video-specific code.
+
+### Bugs Found
+
+* None in already-shipped code — this was new-feature work. Caught and
+  fixed during the feature's own implementation: an ESLint
+  `no-control-regex` violation in a hand-rolled filename-sanitizer regex
+  (dropped the unneeded control-character range rather than suppress the
+  rule); a Playwright test author error (two heavy-job-exclusivity test
+  designs that couldn't actually reach the race they meant to test,
+  because `ExportPanel`'s GIF/video export share one `exporting` boolean —
+  the real, reachable race is Optimize vs. video export, since those are
+  separate panels with independent local state; rewritten and verified).
+
+### Tests
+
+* `npx vitest run`: **96/96** (74 prior + 22 new: `timestamps.test.ts`,
+  `bitrate.test.ts`, `dimensions.test.ts`).
+* New `e2e/video-export.spec.ts` (8 tests, capability-aware rather than
+  blanket-skipped by browser name):
+  1. Capability detection shows a real Available/Unavailable state for
+     both formats, no raw codec string in the primary message, without
+     exporting anything.
+  2. A real WebM file downloads and loads/plays in an actual `<video>`
+     element — correct padded dimensions (441×291 source → 442×292) and
+     correct duration (24 frames × 50ms = 1.2s, matched exactly).
+  3. A real project edit (image overlay, centered by default) is
+     genuinely present when the exported video is decoded and its center
+     pixel sampled — not just correct timing/dimensions.
+  4. A newly-generated tiny (10×10, 4-frame) fixture with variable delays
+     (40/80/20/120ms) produces the exact correct total duration (260ms),
+     not an assumed frame rate — generated at test time via `gifenc`
+     directly (not committed, per this session's own "don't commit media
+     fixtures" instruction).
+  5. Odd source dimensions (441×291) are padded to even (442×292), not
+     distorted, with a user-facing notice.
+  6. Cancelling a video export stops cleanly (no red error toast) and a
+     fresh export afterward still works.
+  7. Starting a video export while Optimize is running is rejected with
+     the shared heavy-job-exclusivity message, and both remain usable
+     afterward once Optimize finishes.
+  8. New Project clears video export state; GIF export still works
+     normally afterward.
+* Full three-browser run: **chromium 44/44**, **firefox 44/44** (WebM
+  verified working on both), **webkit 20/44 passed + 24 skipped + 0
+  failed** (capability-aware self-skips: WebM encoding is genuinely
+  unavailable in this WebKit build, same class of gap as its
+  already-documented OffscreenCanvas absence).
+* `npm run build`: bundle impact verified directly from build output, not
+  assumed — see the Documentation section's IMPLEMENTATION_STATUS.md
+  summary for the exact chunk sizes.
+
+### Performance / real findings
+
+* **H.264/AVC encoding was unavailable everywhere tested this session** —
+  Chromium, Firefox, and WebKit's Playwright builds, *and* real installed
+  Google Chrome on the development machine (checked via `channel: 'chrome'`
+  specifically to rule out "Playwright's bundled Chromium isn't real
+  Chrome" as the explanation). This is consistent with WebCodecs H.264
+  *encoding* commonly depending on a hardware encoder the current
+  device/VM doesn't expose (unlike *decoding*, far more universal).
+  GifForge's capability gating correctly disabled MP4 export with a clear
+  message in every case — verified this is the correct, intended behavior
+  for a genuinely unavailable codec, not a bug to chase further this
+  session. MP4 is therefore recorded as implemented-but-unverified, not
+  DONE, until run on a machine with confirmed H.264 hardware encode.
+* WebM export of the 24-frame loading-icon fixture completed in ~2.5-3s
+  end-to-end (click to download) in manual measurement during
+  development — fast enough that no loading-state UX beyond the existing
+  job-progress toast was needed.
+
+### Documentation
+
+* `README.md`: one-line feature mention.
+* `docs/ARCHITECTURE.md`: new "Video export (MP4/WebM)" section — native
+  WebCodecs + mediabunny strategy, runtime codec probing, lazy-loading
+  boundary (with verified bundle numbers), timing model, frame
+  creation/background compositing, even-dimension padding, backpressure/
+  `VideoFrame` lifecycle, no-audio/one-loop-cycle scope decisions.
+* `docs/IMPLEMENTATION_STATUS.md`: added WebM (DONE) and MP4
+  (implemented-but-unverified) to the DONE section; removed the
+  now-superseded "MP4/WebM export" TODO item; added Known Limitations
+  entries for the MP4 hardware-encode gap and the no-audio/one-loop/
+  composited-background scope decisions; added the mediabunny licensing
+  decision to Technical Decisions; added the full `ffmpeg.wasm` evaluation
+  to Technical Debt; corrected TEST STATUS to the actual re-run counts;
+  re-ranked NEXT PRIORITIES (MP4 hardware verification is now #1).
+
+### Git
+
+* Commits this session, all authored as the repository's configured
+  identity, no AI attribution — verified individually via
+  `git show -s --format="%an <%ae>" HEAD` after each. See the git log for
+  exact hashes/messages.
+* No remote configured (`git remote -v` empty at both start and end of
+  session) — commits remain local, consistent with every prior session.

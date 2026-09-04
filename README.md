@@ -19,6 +19,7 @@ export it — all in one page.
   Before/After comparison (draggable split, animated or frame-by-frame,
   with pixel-level zoom/pan inspection) of the actual optimized output
   before you download it
+* Export edited animations as GIF, MP4, or WebM where supported by the browser
 * Static frame export to PNG/JPEG
 * Undo/redo and local autosave
 

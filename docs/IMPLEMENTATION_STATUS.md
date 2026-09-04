@@ -235,6 +235,43 @@ status" below for exactly what was checked.
   Verified live.
 - **Visual Before/After comparison for Optimize** — see the "Before/After"
   bullet above. Was the top item in NEXT PRIORITIES; done as of this entry.
+- **WebM video export** — the same edited project (crop/resize/rotate/
+  speed/frame order/text/overlay layers, per-frame visibility) exported as
+  a real, playable WebM file, via native WebCodecs (`VideoEncoder`) and
+  mediabunny's muxer (see "Video export" in `docs/ARCHITECTURE.md`).
+  Reuses the exact same `renderAllFrames` GIF export uses — no separate
+  render path. Real per-frame GIF delays convert to integer-microsecond
+  video timestamps (`core/video/timestamps.ts`, unit tested), not an
+  assumed frame rate. Verified live in both Chromium and Firefox (real
+  installed Google Chrome included, not just Playwright's bundled build):
+  a real `.webm` file downloads, loads and plays in an actual `<video>`
+  element, reports the correct (padded-to-even) dimensions and the
+  correct duration (variable-delay fixture: 40/80/20/120ms → 260ms,
+  matched exactly), and a real project edit (image overlay) is visibly
+  present when the exported video is decoded and sampled. Odd source
+  dimensions are padded by at most 1px (not rescaled/distorted) with a
+  user-facing notice. Cancellable; shares the exact same
+  heavy-job-exclusivity guard as GIF export/optimize (verified: starting
+  a video export while Optimize is running is rejected with the same
+  clear message, and both remain usable afterward). WebKit: correctly
+  capability-gated as unavailable (its Playwright test build's
+  `VideoEncoder` can't encode VP9 or VP8) rather than failing or
+  producing a broken file.
+- **MP4 video export — implemented, but not verified as producing a real
+  playable file in this session.** Shares 100% of the same code path as
+  WebM (`core/video/exportVideo.ts` — only the codec string and container
+  format differ), and correctly, honestly capability-gates itself:
+  H.264/AVC encoding via `VideoEncoder` was unavailable in *every* browser
+  tested this session, including real installed Google Chrome on the
+  development machine (not just Playwright's bundled Chromium) — a real,
+  environment-dependent limitation (WebCodecs H.264 *encode* commonly
+  needs a hardware encoder the current machine/VM doesn't expose; this
+  differs from H.264 *decode*, which is far more universally available).
+  The MP4 format tab correctly shows "This browser cannot encode H.264/AVC
+  video." and disables the Export button rather than attempting a broken
+  export. Per this session's own instructions, MP4 is deliberately **not**
+  marked fully DONE until a real MP4 has actually been produced and played
+  back successfully on a machine where H.264 encoding is available.
 
 # IN PROGRESS / PARTIAL
 
@@ -249,9 +286,6 @@ status" below for exactly what was checked.
 
 # TODO (not implemented)
 
-- MP4 / WebM export (explicitly optional for MVP per spec; not started —
-  architecture keeps it isolable as a future lazy-loaded module since the
-  export pipeline is already decoupled from the GIF codec specifically).
 - ZIP export of multiple selected static frames (single-frame export only).
 - APNG / WebP animation export, SRT subtitles, chroma key, stickers, batch
   processing/export, filters/effects, cloud integration — all explicitly
@@ -340,6 +374,30 @@ status" below for exactly what was checked.
   frame-subsampling (bounded, honest about a reduced-fidelity comparison,
   not just for the sake of it) only if a real GIF larger than this
   session's stress fixture actually causes a problem.
+- **MP4 export is real but currently unverifiable on any machine available
+  to this project**: H.264/AVC `VideoEncoder` support was probed directly
+  (not assumed) and found unavailable in Chromium, Firefox, and WebKit's
+  Playwright builds, *and* in real installed Google Chrome on the
+  development machine. This is consistent with a widely-documented reality
+  of WebCodecs: H.264 *encoding* commonly depends on a hardware encoder
+  the current device/VM exposes, unlike H.264 *decoding*, which browsers
+  support far more universally regardless of hardware. GifForge correctly
+  detects this and disables MP4 export with a clear message rather than
+  attempting a broken export — but this also means MP4's actual output
+  (container correctness, playability) has not been end-to-end verified
+  by this project, only WebM has. Revisit verification on a machine with
+  confirmed H.264 hardware encode support (e.g. most consumer laptops
+  with Intel Quick Sync / equivalent) before considering MP4 fully DONE.
+- **Video export is video-only — no audio track** (GIF has no audio to
+  preserve, and none is synthesized). **GIF loop settings do not carry
+  over to video** — a video export encodes exactly one animation cycle,
+  regardless of the GIF's configured loop count; both are deliberate
+  scope decisions, not omissions.
+- **Transparent pixels in video export are composited onto a solid
+  background** (black/white/custom, user-selectable) rather than
+  attempting alpha preservation — video codec/container alpha support is
+  inconsistent enough across players that a composited background is the
+  more honestly reliable choice for an initial implementation.
 
 # TECHNICAL DECISIONS
 
@@ -377,43 +435,75 @@ status" below for exactly what was checked.
   defaulted to) + Vitest + ESLint 8**, chosen over the bleeding-edge versions
   `npm create vite@latest` initially installed, prioritizing build stability
   per the project's stated priorities.
+- **`mediabunny` for MP4/WebM muxing** (MPL-2.0 license — noted explicitly
+  since it's not permissive like this project's other dependencies, but
+  MPL-2.0 permits closed-source commercial use; only files *within*
+  mediabunny itself carry the MPL, not GifForge's own code, since GifForge
+  imports it as an unmodified npm dependency rather than embedding/
+  modifying its source). Verified before adding, not assumed: actively
+  maintained (published the same day it was evaluated, 100+ releases in
+  ~15 months), zero real runtime dependencies (only two `@types/*` ambient
+  type packages), real TypeScript definitions (read directly from
+  `node_modules` to derive this project's actual usage, not just its
+  marketing docs), and it is the direct, actively-recommended successor to
+  the same author's older `mp4-muxer`/`webm-muxer` packages — using the
+  successor rather than the packages it superseded. Chosen over hand-rolling
+  MP4/WebM container writing directly against raw `EncodedVideoChunk`s
+  (viable but substantially more implementation risk for muxing-format
+  correctness) and over `ffmpeg.wasm` (see the dedicated entry under
+  Technical Debt for why that was evaluated and deferred, not silently
+  skipped).
 
 # TEST STATUS
 
-- **Unit tests**: 74 passing (`npx vitest run`), 8 files — frame-range
+- **Unit tests**: 96 passing (`npx vitest run`), 11 files — frame-range
   parsing, coordinate math, crop/resize/rotate math, frame-order
   edit operations, the GIF disposal compositor (all 4 disposal types +
   transparency), target-size search config ordering (including two
   regression tests for the cartesian-explosion bug described below),
   two real-file decode/encode/round-trip integration tests using actual
   downloaded GIF fixtures (`fixtures/rotating-earth.gif`, 44 frames;
-  `fixtures/loading-icon.gif`, 24 frames), and the Before/After zoom/pan
+  `fixtures/loading-icon.gif`, 24 frames), the Before/After zoom/pan
   viewport geometry (`beforeAfterViewport.test.ts`, 10 tests — fit-scale
   math, pan clamping, and the "same normalized region maps correctly onto
-  two differently-sized sources" linked-navigation guarantee).
+  two differently-sized sources" linked-navigation guarantee), and video
+  export's pure logic (22 tests across `timestamps.test.ts`,
+  `bitrate.test.ts`, `dimensions.test.ts` — variable-delay-to-timestamp
+  conversion with no compounding rounding drift, bitrate scaling with
+  dimensions/fps/preset and its clamps, and even-dimension padding
+  including the exact 401×301 case from this session's own spec).
 - **Typecheck**: `npx tsc -b` — clean, zero errors.
 - **Lint**: `npx eslint . --ext ts,tsx` — clean, zero errors/warnings.
-- **Production build**: `npm run build` — succeeds.
-- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 36
-  persisted tests across 8 files, actually part of this repository (unlike
+- **Production build**: `npm run build` — succeeds. Verified (not just
+  assumed from a dynamic `import()` existing in source) that mediabunny is
+  genuinely lazy-loaded: the main entry bundle grew only ~9KB (313.02KB →
+  322.30KB, from the new Export panel UI, not from mediabunny), while
+  mediabunny's own code sits in separate chunks (a ~17KB chunk for the
+  capability-check-only path, a ~211KB chunk for the full encode/mux path)
+  reachable only via dynamic `import()` from inside the worker's
+  `exportVideo` method or the main thread's capability check —
+  `pipeline.worker.js` itself grew by under 1KB. GIF-only sessions that
+  never touch the MP4/WebM format tab pay none of this cost.
+- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 44
+  persisted tests across 9 files, actually part of this repository (unlike
   prior sessions' ad hoc scratch scripts — see `docs/PROGRESS.md`'s
   2026-09-04 20:13 entry). Each real-browser-only regression case earlier
   sessions found manually (layer z-order, layer reorder direction, target-
   size search reduction ordering, frame-count sync after delete, error-
   boundary recovery, cancel-doesn't-cancel, overlapping-job races, orphaned
   job toasts, the visual comparison's real-data guarantee, the zoom/pan
-  inspector, a real storage failure, etc.) now has a permanent test
-  guarding it. CI runs the chromium project on every push/PR; the full
-  cross-browser run (`npm run test:e2e`, all three engines) is run
-  periodically/manually.
+  inspector, a real storage failure, real video export/playback, etc.) now
+  has a permanent test guarding it. CI runs the chromium project on every
+  push/PR; the full cross-browser run (`npm run test:e2e`, all three
+  engines) is run periodically/manually.
 
-  ### Browser test results (last run 2026-09-04, this repo's actual `e2e/` suite)
+  ### Browser test results (last run 2026-09-05, this repo's actual `e2e/` suite)
 
   | Browser  | Passed | Skipped | Failed | Notes |
   |----------|-------:|--------:|-------:|-------|
-  | Chromium | 36/36  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
-  | Firefox  | 36/36  | 0       | 0      | Run manually this session; not in CI |
-  | WebKit   | 19/36  | 17      | 0      | 17 tests skip with an explicit reason: export/optimize/static-frame-export/before-after-compare/zoom-inspector/one storage-health test need OffscreenCanvas, unavailable in this WebKit build (see "Known Limitations") — the *other* storage-health test doesn't touch export/optimize and correctly runs (and passes) on WebKit too |
+  | Chromium | 44/44  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
+  | Firefox  | 44/44  | 0       | 0      | Run manually this session; not in CI |
+  | WebKit   | 20/44  | 24      | 0      | Video-export tests are capability-aware, not blanket-skipped by browser name: they self-skip via a real runtime check of whether WebM encoding is actually available (it isn't, in this WebKit build), same as the rest of this table's OffscreenCanvas-dependent skips (see "Known Limitations") |
 
   "TESTED" below means an assertion in this table or in `e2e/` actually ran
   and passed against that engine this session — not inferred or assumed.
@@ -725,12 +815,58 @@ they start costing more than they saved:
   Limitations) is technical debt as much as a limitation — the encoder
   interface (`core/gif/encoder.ts`) was intentionally kept simple pending
   evidence that output size actually needs it for real users' GIFs.
+- **`ffmpeg.wasm` fallback for browsers without native H.264/VP9/VP8
+  encoding — evaluated, deliberately not added.** Per this session's own
+  brief: investigated only after the native path worked, and only as a
+  recorded recommendation, not an implementation.
+  - **Payload**: `@ffmpeg/core`'s unpacked size is ~65MB (WASM binary +
+    JS glue) — checked directly via `npm view`, not estimated. Even with
+    aggressive lazy-loading, this dwarfs mediabunny's ~211KB full-encode
+    chunk by roughly 300x.
+  - **Initialization model**: requires fetching and instantiating that
+    WASM module before any encode can start (real network + compile
+    latency, commonly multiple seconds even on a fast connection) and
+    building a virtual filesystem for input/output files — a fundamentally
+    different, heavier startup cost than WebCodecs' near-instant
+    `VideoEncoder`.
+  - **Worker implications**: `@ffmpeg/ffmpeg` conventionally spawns and
+    manages its own worker internally, which sits awkwardly against this
+    project's deliberate one-worker architecture (`GifPipeline` owns the
+    only large decoded frame buffers) — integrating it would mean either
+    transferring rendered frames out to a second worker (real cross-worker
+    transfer cost this project has specifically avoided elsewhere) or
+    embedding ffmpeg's worker management inside the existing one (fighting
+    its own conventions).
+  - **SharedArrayBuffer**: the multi-threaded (fast) build requires
+    `SharedArrayBuffer`, which requires serving the app with
+    `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy` headers —
+    a real deployment constraint GifForge does not currently need, with
+    knock-on effects for any cross-origin resource loading. The
+    single-threaded build avoids this but is substantially slower.
+  - **Recommendation**: not worth it right now. WebM (verified working in
+    both Chromium and Firefox this session) already covers the two
+    engines with the broadest real-world reach; MP4/H.264's gap is a
+    hardware-encoder-availability issue that `ffmpeg.wasm` doesn't
+    necessarily solve either (its own H.264 encoder is *also* often a
+    software fallback with real performance/quality tradeoffs, not a
+    magic fix). Revisit only if a concrete unsupported-browser complaint
+    materializes and the value is judged to outweigh a ~65MB conditional
+    dependency plus a second worker/COOP-COEP architecture change.
 
 # NEXT PRIORITIES
 
 Ranked by expected value given the current state — highest first:
 
-1. **Get WebKit's 17 skipped tests passing**, if real Safari/WebKit support
+1. **Verify MP4 export end-to-end on a machine with real H.264 hardware
+   encode support.** This is now the single highest-value remaining gap:
+   the code path is implemented, shares 100% of the proven-working WebM
+   logic, and correctly capability-gates itself — but was unverifiable
+   this session because H.264 `VideoEncoder` support was unavailable
+   everywhere tested, including real installed Google Chrome on the dev
+   machine. A consumer laptop/desktop with a real GPU (Intel Quick Sync or
+   equivalent) very likely *would* support it; this needs an actual run
+   there, not further code changes, before MP4 can be marked DONE.
+2. **Get WebKit's 24 skipped tests passing**, if real Safari/WebKit support
    turns out to matter for the target audience. Requires either confirming
    real Safari *does* support OffscreenCanvas (in which case the gap is
    specific to Playwright's bundled WebKit test build, not a real product
@@ -742,22 +878,22 @@ Ranked by expected value given the current state — highest first:
    second full rendering path solely to satisfy the bundled Playwright
    WebKit build isn't justified without first confirming real Safari
    actually needs it.
-2. **The optional RGBA pixel-color readout for the Before/After zoom
-   inspector** — deliberately skipped this session in favor of the
-   (already-shipped) coordinate-only readout, since color sampling needs a
-   throttled `getImageData` call and adds real complexity/risk for a
-   "nice to have." The zoom/pan infrastructure it would build on already
-   exists now, so this is a small, well-scoped follow-up, not a new
-   subsystem.
-3. **Sub-rectangle frame diffing on export**, *only* if a real GIF's output
+3. **The optional RGBA pixel-color readout for the Before/After zoom
+   inspector** — deliberately skipped in an earlier session in favor of
+   the (already-shipped) coordinate-only readout, since color sampling
+   needs a throttled `getImageData` call and adds real complexity/risk for
+   a "nice to have." The zoom/pan infrastructure it would build on already
+   exists, so this is a small, well-scoped follow-up, not a new subsystem.
+4. **Sub-rectangle frame diffing on export**, *only* if a real GIF's output
    size becomes a concrete complaint — correctness must not regress, so
    this needs its own disposal-correctness test coverage before shipping.
-4. **Deeper Performance Mode improvements** — it currently only affects
+5. **Deeper Performance Mode improvements** — it currently only affects
    initial preview-bitmap resolution (see Known Limitations), not
    thumbnail count/resolution or delaying non-essential work. Worth
    revisiting if a real large-GIF session reports sluggishness beyond what
-   the existing measured stress-test numbers suggest. Deliberately not
-   touched this session (no concrete bug found that required it).
-5. Everything explicitly deferred per the original spec (MP4/WebM, ZIP
-   export, APNG/WebP, subtitles, batch processing, filters) remains
-   correctly out of scope until requested.
+   the existing measured stress-test numbers suggest.
+6. Everything explicitly deferred per the original spec (audio, video
+   import, MP4 editing, subtitle tracks, ZIP export, APNG/WebP, batch
+   processing, filters, `ffmpeg.wasm` — see Technical Debt for why the
+   last one was evaluated and deferred) remains correctly out of scope
+   until requested.
