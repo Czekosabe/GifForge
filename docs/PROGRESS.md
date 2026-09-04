@@ -1264,3 +1264,45 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
   into the encode path`), authored as the repository's configured
   identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD`.
+
+## 2026-09-05 01:20 — Fixed a real bug: video codec-support probe ignored the Scale setting
+
+### Audit
+
+* Continuing the same audit cycle, re-checked `ExportPanel.tsx`'s codec-
+  support effect and found it calls `detectVideoCodecSupport(width, height)`
+  using the project's raw post-edit dimensions — never accounting for the
+  video-only "Scale" setting the user can set independently. A source
+  large enough to exceed a codec's real resolution limit would show
+  "Unavailable" and permanently disable Export, even if scaling down would
+  have brought it within range. Never a broken export (the direction this
+  project has always erred toward), but a wrongly-disabled one.
+
+### Fix
+
+* Added `computeScaledPaddedDimensions(width, height, scalePercent)` to
+  `core/video/dimensions.ts` — the same scale-then-pad math
+  `core/video/exportVideo.ts` already performs internally at actual encode
+  time, now factored out and shared so the UI probe checks the real target
+  size instead of duplicating (and silently diverging from) that logic.
+  `ExportPanel.tsx`'s effect now uses it and re-runs when the scale setting
+  changes.
+* 4 new unit tests in `dimensions.test.ts` (100%-scale parity with
+  `computeEvenDimensions`, scale-then-pad ordering, an odd-after-scaling
+  case, and a floor-at-1px guard for extreme scale-down on a tiny source).
+* Full verification: `npm run typecheck` clean, `npm run lint` clean,
+  `npm test` 104/104 passing (up from 100), full `video-export.spec.ts`
+  suite re-run on both Chromium (9/9) and Firefox (9/9) to confirm the
+  added effect dependency introduced no timing regression.
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: added bug #13 to "Bugs found and
+  fixed", updated the unit test count/description in TEST STATUS.
+
+### Git
+
+* One commit (`fix: probe video codec support at the actual scaled export
+  size, not the source size`), authored as the repository's configured
+  identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD`.

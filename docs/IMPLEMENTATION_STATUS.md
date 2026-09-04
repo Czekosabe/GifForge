@@ -488,7 +488,7 @@ status" below for exactly what was checked.
 
 # TEST STATUS
 
-- **Unit tests**: 100 passing (`npx vitest run`), 11 files — frame-range
+- **Unit tests**: 104 passing (`npx vitest run`), 11 files — frame-range
   parsing, coordinate math, crop/resize/rotate math, frame-order
   edit operations, the GIF disposal compositor (all 4 disposal types +
   transparency), target-size search config ordering (including two
@@ -499,14 +499,17 @@ status" below for exactly what was checked.
   viewport geometry (`beforeAfterViewport.test.ts`, 10 tests — fit-scale
   math, pan clamping, and the "same normalized region maps correctly onto
   two differently-sized sources" linked-navigation guarantee), and video
-  export's pure logic (26 tests across `timestamps.test.ts`,
+  export's pure logic (30 tests across `timestamps.test.ts`,
   `bitrate.test.ts`, `dimensions.test.ts` — variable-delay-to-timestamp
   conversion with no compounding rounding drift, bitrate scaling with
   dimensions/fps/preset and its clamps, `resolveBitrate`'s custom-vs-
   computed selection (added after discovering `clampCustomBitrate` existed
   and was tested but was never actually called from the real export
-  path — see "Bugs found and fixed" #12 below), and even-dimension padding
-  including the exact 401×301 case from this session's own spec).
+  path — see "Bugs found and fixed" #12 below), even-dimension padding
+  including the exact 401×301 case from this session's own spec, and
+  `computeScaledPaddedDimensions`'s scale-then-pad composition (added
+  after discovering the codec-support probe checked pre-scale dimensions
+  — see #13 below)).
 - **Typecheck**: `npx tsc -b` — clean, zero errors.
 - **Lint**: `npx eslint . --ext ts,tsx` — clean, zero errors/warnings.
 - **Production build**: `npm run build` — succeeds. Verified (not just
@@ -763,6 +766,26 @@ status" below for exactly what was checked.
     by 4 new fast unit tests in `bitrate.test.ts` — including the exact
     500 Gbps-in-bps regression case — which is what actually verifies the
     wiring, unlike the abandoned e2e attempt.
+13. **The video codec-support probe checked the pre-scale source size, not
+    the actual export size**: `ExportPanel.tsx`'s capability-check effect
+    called `detectVideoCodecSupport(width, height)` using the project's
+    raw post-edit (crop/resize/rotate) dimensions, ignoring the video-only
+    "Scale" setting entirely. A source large enough to exceed a codec's
+    real resolution limit would show "Unavailable" and disable the Export
+    button even if the user's chosen scale-down would have brought it
+    comfortably within range — never a broken export, but a wrongly
+    disabled one for large-enough sources, working against the spec's
+    "explicit runtime codec capability probing" requirement, which implies
+    probing the parameters actually used, not just the source's. Found by
+    re-reading the probe alongside the (separately fixed) bitrate wiring
+    bug above and noticing the scale setting never reached it. Fixed by
+    adding `computeScaledPaddedDimensions(width, height, scalePercent)` to
+    `dimensions.ts` — the same scale-then-pad math `exportVideo.ts` already
+    performs internally, now shared instead of only checked at export
+    time — and probing at that size, re-running whenever the scale setting
+    changes. Covered by 4 new unit tests in `dimensions.test.ts`. Re-ran
+    the full `video-export.spec.ts` suite on Chromium and Firefox (9/9 on
+    both) to confirm the added effect dependency caused no regression.
 
 ## Verification rounds
 

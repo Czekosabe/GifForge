@@ -17,3 +17,17 @@ export function computeEvenDimensions(width: number, height: number): PaddedDime
   const evenHeight = height % 2 === 0 ? height : height + 1
   return { width: evenWidth, height: evenHeight, padded: evenWidth !== width || evenHeight !== height }
 }
+
+/**
+ * The exact scale-then-pad dimensions a video export will actually encode at — used by the
+ * codec-support probe so it checks the real target size instead of the pre-scale source size.
+ * Checking the unscaled size meant a source large enough to exceed a codec's resolution limit
+ * could show as "unavailable" and disable Export even when the user's chosen scale-down would
+ * have brought it comfortably within range.
+ */
+export function computeScaledPaddedDimensions(width: number, height: number, scalePercent: number): PaddedDimensions {
+  const scale = scalePercent / 100
+  const scaledWidth = Math.max(1, Math.round(width * scale))
+  const scaledHeight = Math.max(1, Math.round(height * scale))
+  return computeEvenDimensions(scaledWidth, scaledHeight)
+}

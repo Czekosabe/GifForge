@@ -9,6 +9,7 @@ import { Section, Button, Select, Checkbox } from '../components/ui/Section'
 import { NumberField } from '../components/ui/NumberField'
 import type { ExportSettings, LoopMode } from '../types/project'
 import type { VideoCodecSupport, VideoExportFormat, VideoExportOptions, VideoQualityPreset } from '../core/video/types'
+import { computeScaledPaddedDimensions } from '../core/video/dimensions'
 
 const EXPORT_PRESETS: Record<string, Partial<ExportSettings>> = {
   'Best Quality': { quality: 'best', maxColors: 256, dither: true, scalePercent: 100 },
@@ -79,8 +80,12 @@ export function ExportPanel() {
     async function check() {
       const pipeline = getPipeline()
       const { width, height } = await pipeline.getOutputDimensions(project!.edits)
+      // Probe at the size the export will actually encode at (post-scale, post-pad) — probing
+      // the pre-scale source size could show "unavailable" for a large source even when the
+      // user's chosen scale-down would bring it within the codec's real resolution limit.
+      const { width: scaledWidth, height: scaledHeight } = computeScaledPaddedDimensions(width, height, videoScalePercent)
       const { detectVideoCodecSupport } = await import('../core/video/capabilities')
-      const support = await detectVideoCodecSupport(width, height)
+      const support = await detectVideoCodecSupport(scaledWidth, scaledHeight)
       if (!cancelled) {
         setCodecSupport(support)
         setCheckingSupport(false)
@@ -92,11 +97,11 @@ export function ExportPanel() {
     return () => {
       cancelled = true
     }
-    // Re-checking only when the format tab changes (or the project changes) is intentional —
-    // this is a one-time-per-selection capability probe, not something that should re-run on
-    // every unrelated re-render.
+    // Re-checking only when the format tab, project, or scale changes is intentional — this is
+    // a one-time-per-selection capability probe, not something that should re-run on every
+    // unrelated re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [format, project?.edits])
+  }, [format, project?.edits, videoScalePercent])
 
   if (!project) return null
   const settings = project.exportSettings
