@@ -255,6 +255,25 @@ exist. A Frame mode reuses the editor's current timeline frame (proportionally
 mapped if frame counts differ) rather than inventing a separate frame
 picker.
 
+**Frame mode's pixel-level zoom/pan** (`beforeAfterViewport.ts`, unit tested
+directly) is a pure-geometry layer on top of the same canvases — it does not
+touch the worker, the decoded bitmaps, or the optimizer. Zoom (Fit/100%/
+200%/400%/800%) and pan share one normalized center point (`{x, y}` in
+[0,1]), computed once and mapped independently onto each side's own actual
+pixel dimensions via `computeViewportLayout`, so Original and Optimized
+inspect the same visual region even when optimization changed the
+resolution — neither side is stretched into the other's coordinate system.
+Concretely: each canvas's CSS `left`/`top`/`width`/`height` (not its
+backing-store resolution, which stays native throughout) is set directly
+from that computed layout, with `image-rendering: pixelated` applied above
+Fit — a display-compositing property, not a draw-time one, since nothing
+redraws the bitmap via `drawImage` at a different scale on zoom; the
+already-decoded native-resolution content is just displayed at a different
+CSS size. This is why zooming/panning is cheap: it's canvas-CSS-property
+changes on data already in memory, never a re-decode, re-render, or
+re-optimize. Animated mode ignores all of this and keeps its original
+`object-contain` layout, by design — zoom only applies in Frame mode.
+
 **Stale-result invalidation**: `OptimizePanel` keeps a ref to the `Project`
 a result was produced from; if the live `project` reference changes
 afterward (further edits, different optimize settings, Reset to original, a
@@ -307,6 +326,28 @@ an `ArrayBuffer` has no such problem in any tested browser. Overlay-asset
 persistence is additionally best-effort — a `saveAsset` failure is caught
 and logged rather than blocking the layer from being usable for the rest of
 the current session (only autosave-restore-after-reload is affected).
+
+**Storage-health notice.** A caught, logged storage failure used to be
+visible only via `console.warn` — a real failure (IndexedDB disabled,
+quota exhausted, private-browsing restrictions) gave the user no signal at
+all that their work might not survive a reload. `storageHealthStore.ts` is
+a small, dedicated Zustand store — not folded into `jobStore`, since
+storage health is a standing condition ("is persistence usable right now"),
+not an async operation with progress/cancel semantics — with three
+transitions: `reportFailure()` (only takes effect from a *healthy* state,
+so repeated failures during the same outage, e.g. every 1.5s autosave
+retry, are no-ops — the notice shows once per failure *episode*, not once
+per attempt), `reportSuccess()` (clears the unhealthy state so a later,
+genuinely new failure can notify again), and `dismiss()` (hides the banner
+without curing the underlying condition — a dismissed notice stays hidden
+through further failures of the same episode, only reappearing after a
+success/failure cycle). `saveProjectAutosave`, the autosave-restore read,
+and `saveAsset` all report into this same store, so one consistent,
+non-blocking banner (`StorageHealthBanner.tsx`, opposite corner from
+`JobStatusBar` so the two never overlap) covers every persistence path
+without threading UI state through each call site individually. A storage
+failure never blocks editing or export — both are fully independent of
+IndexedDB.
 
 ## Lifecycle sync and cleanup (`src/app/use*.ts`)
 

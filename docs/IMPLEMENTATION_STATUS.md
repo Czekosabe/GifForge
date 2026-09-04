@@ -108,6 +108,23 @@ status" below for exactly what was checked.
   canvas's decoded pixel data matches the real downloaded file's decoded
   pixel data exactly, confirming the "after" view is the actual optimizer
   output, not an approximation.
+- **Before/After pixel-level zoom/pan inspector** (Frame mode) — Fit/100%/
+  200%/400%/800% zoom with pointer-drag pan, sharing one normalized pan
+  center between Original and Optimized (`beforeAfterViewport.ts`, unit
+  tested) so the same visual region stays aligned even when optimization
+  changed the resolution, without stretching either source into the
+  other's coordinate system. Pure display transform over the
+  already-decoded bitmaps — canvas backing stores stay native resolution,
+  `image-rendering: pixelated` applies above Fit instead of blurring
+  dithering/quantization texture — so zooming/panning never re-decodes,
+  redraws via the worker, or re-runs optimization. The split divider keeps
+  working independently while zoomed; a lightweight hover readout shows
+  the inspected source-pixel coordinate for both sides. Verified live:
+  zoom genuinely changes the rendered canvas size with no new job/toast,
+  pan updates the readout to a different source pixel at the same
+  viewport point, Reset View restores the exact pre-zoom size, and a real
+  differing-dimensions result (400×400 original, 340×340 optimized)
+  renders both sides at correctly proportioned sizes.
 - **Export** — real `gifenc`-based encoding with loop mode (forever / none /
   custom count), frame-range subset, quality/color/dither/scale controls,
   7 presets. Verified live: downloaded file re-decodes with `gifuct-js`,
@@ -126,6 +143,20 @@ status" below for exactly what was checked.
   live end-to-end: edited → reloaded the page → restore banner appeared →
   restored project had the edit intact and the worker was correctly
   re-populated (decode re-run against the saved source blob).
+- **Storage-health warning** — a caught autosave/asset-persistence failure
+  used to be visible only via `console.warn`. A small dedicated store
+  (`storageHealthStore.ts`, deliberately not folded into `jobStore` — this
+  is a standing condition, not an async operation) now surfaces a
+  non-blocking banner ("Local autosave is unavailable. You can continue
+  editing, but your project may not survive a page reload."), deduplicated
+  so a continuing failure (e.g. every 1.5s autosave retry) doesn't
+  re-notify, dismissible, and self-clearing if persistence starts working
+  again so a genuinely new failure can notify once more. Editing and export
+  stay fully usable regardless. Verified live with a real failure (not
+  mocked): removing `window.indexedDB` before the app loads (matches real
+  private-browsing/disabled-storage scenarios) — the banner appears once,
+  survives further failed attempts without duplicating, stays hidden after
+  being dismissed, and export still completes normally.
 - **Job system** — typed job list (`jobStore`) with progress/message/
   cancel, rendered as toasts (`JobStatusBar.tsx`); load/optimize/export all
   report real (not synthetic) progress fractions from the worker. Starting a
@@ -349,36 +380,40 @@ status" below for exactly what was checked.
 
 # TEST STATUS
 
-- **Unit tests**: 64 passing (`npx vitest run`), 7 files — frame-range
+- **Unit tests**: 74 passing (`npx vitest run`), 8 files — frame-range
   parsing, coordinate math, crop/resize/rotate math, frame-order
   edit operations, the GIF disposal compositor (all 4 disposal types +
   transparency), target-size search config ordering (including two
-  regression tests for the cartesian-explosion bug described below), and
+  regression tests for the cartesian-explosion bug described below),
   two real-file decode/encode/round-trip integration tests using actual
   downloaded GIF fixtures (`fixtures/rotating-earth.gif`, 44 frames;
-  `fixtures/loading-icon.gif`, 24 frames).
+  `fixtures/loading-icon.gif`, 24 frames), and the Before/After zoom/pan
+  viewport geometry (`beforeAfterViewport.test.ts`, 10 tests — fit-scale
+  math, pan clamping, and the "same normalized region maps correctly onto
+  two differently-sized sources" linked-navigation guarantee).
 - **Typecheck**: `npx tsc -b` — clean, zero errors.
 - **Lint**: `npx eslint . --ext ts,tsx` — clean, zero errors/warnings.
 - **Production build**: `npm run build` — succeeds.
-- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 31
-  persisted tests across 6 files, actually part of this repository (unlike
+- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 36
+  persisted tests across 8 files, actually part of this repository (unlike
   prior sessions' ad hoc scratch scripts — see `docs/PROGRESS.md`'s
   2026-09-04 20:13 entry). Each real-browser-only regression case earlier
   sessions found manually (layer z-order, layer reorder direction, target-
   size search reduction ordering, frame-count sync after delete, error-
   boundary recovery, cancel-doesn't-cancel, overlapping-job races, orphaned
-  job toasts, the visual comparison's real-data guarantee, etc.) now has a
-  permanent test guarding it. CI runs the chromium project on every
-  push/PR; the full cross-browser run (`npm run test:e2e`, all three
-  engines) is run periodically/manually.
+  job toasts, the visual comparison's real-data guarantee, the zoom/pan
+  inspector, a real storage failure, etc.) now has a permanent test
+  guarding it. CI runs the chromium project on every push/PR; the full
+  cross-browser run (`npm run test:e2e`, all three engines) is run
+  periodically/manually.
 
   ### Browser test results (last run 2026-09-04, this repo's actual `e2e/` suite)
 
   | Browser  | Passed | Skipped | Failed | Notes |
   |----------|-------:|--------:|-------:|-------|
-  | Chromium | 31/31  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
-  | Firefox  | 31/31  | 0       | 0      | Run manually this session; not in CI |
-  | WebKit   | 18/31  | 13      | 0      | 13 tests skip with an explicit reason: export/optimize/static-frame-export/before-after-compare need OffscreenCanvas, unavailable in this WebKit build (see "Known Limitations") |
+  | Chromium | 36/36  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
+  | Firefox  | 36/36  | 0       | 0      | Run manually this session; not in CI |
+  | WebKit   | 19/36  | 17      | 0      | 17 tests skip with an explicit reason: export/optimize/static-frame-export/before-after-compare/zoom-inspector/one storage-health test need OffscreenCanvas, unavailable in this WebKit build (see "Known Limitations") — the *other* storage-health test doesn't touch export/optimize and correctly runs (and passes) on WebKit too |
 
   "TESTED" below means an assertion in this table or in `e2e/` actually ran
   and passed against that engine this session — not inferred or assumed.
@@ -679,14 +714,13 @@ they start costing more than they saved:
   Revisit if WebKit support becomes a real product priority (see Next
   Priorities) — at that point the failing/skipped WebKit tests would need
   to actually pass, and adding a WebKit CI job would be worth the time cost.
-- **Overlay-asset persistence is now explicitly best-effort** (see bug #8):
-  a `saveAsset` failure is caught and logged rather than blocking the user.
-  This is the right tradeoff for a *storage* failure, but it does mean a
-  systemic IndexedDB problem (quota exhausted, private browsing in a
-  browser that fully disables it, etc.) degrades silently-ish (a
-  `console.warn`, no user-facing toast) rather than surfacing clearly. A
-  one-time "autosave isn't working" notice would be a reasonable follow-up
-  if this turns out to matter in practice.
+- ~~**Overlay-asset persistence is now explicitly best-effort... degrades
+  silently-ish**~~ — **Resolved this session.** A `saveAsset`/autosave
+  failure is still caught and logged (the right tradeoff — it doesn't
+  block the user), but now also surfaces a real, deduplicated,
+  non-blocking banner via `storageHealthStore.ts` /
+  `StorageHealthBanner.tsx` instead of only a `console.warn`. See the
+  "Storage-health warning" DONE entry above.
 - **No sub-rectangle frame-diffing on export** (already listed under Known
   Limitations) is technical debt as much as a limitation — the encoder
   interface (`core/gif/encoder.ts`) was intentionally kept simple pending
@@ -696,7 +730,7 @@ they start costing more than they saved:
 
 Ranked by expected value given the current state — highest first:
 
-1. **Get WebKit's 13 skipped tests passing**, if real Safari/WebKit support
+1. **Get WebKit's 17 skipped tests passing**, if real Safari/WebKit support
    turns out to matter for the target audience. Requires either confirming
    real Safari *does* support OffscreenCanvas (in which case the gap is
    specific to Playwright's bundled WebKit test build, not a real product
@@ -704,20 +738,26 @@ Ranked by expected value given the current state — highest first:
    real Safari genuinely lacks it too, implementing a non-OffscreenCanvas
    fallback render path for the export/optimize pipeline specifically —
    a real architectural addition, not a quick fix, so worth confirming the
-   premise first.
-2. **A pixel-level zoom/magnifier for the Before/After viewer's Frame
-   mode** — the viewer already renders at full native resolution (no
-   worker-side downscale) specifically so dithering/quantization texture
-   isn't blurred away, but there's currently no in-app way to zoom in on it
-   beyond the browser's own page zoom. A natural, contained follow-up to
-   what shipped this session, not a new subsystem.
+   premise first. Not attempted this session, deliberately: implementing a
+   second full rendering path solely to satisfy the bundled Playwright
+   WebKit build isn't justified without first confirming real Safari
+   actually needs it.
+2. **The optional RGBA pixel-color readout for the Before/After zoom
+   inspector** — deliberately skipped this session in favor of the
+   (already-shipped) coordinate-only readout, since color sampling needs a
+   throttled `getImageData` call and adds real complexity/risk for a
+   "nice to have." The zoom/pan infrastructure it would build on already
+   exists now, so this is a small, well-scoped follow-up, not a new
+   subsystem.
 3. **Sub-rectangle frame diffing on export**, *only* if a real GIF's output
    size becomes a concrete complaint — correctness must not regress, so
    this needs its own disposal-correctness test coverage before shipping.
-4. **A one-time "autosave isn't working" notice** if overlay-asset/autosave
-   persistence fails (currently a caught, logged, best-effort failure with
-   no user-facing signal — see Technical Debt) — worth it if silent storage
-   failures turn out to actually confuse users in practice.
+4. **Deeper Performance Mode improvements** — it currently only affects
+   initial preview-bitmap resolution (see Known Limitations), not
+   thumbnail count/resolution or delaying non-essential work. Worth
+   revisiting if a real large-GIF session reports sluggishness beyond what
+   the existing measured stress-test numbers suggest. Deliberately not
+   touched this session (no concrete bug found that required it).
 5. Everything explicitly deferred per the original spec (MP4/WebM, ZIP
    export, APNG/WebP, subtitles, batch processing, filters) remains
    correctly out of scope until requested.

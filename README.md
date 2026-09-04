@@ -16,8 +16,9 @@ export it — all in one page.
 * Text layers and image overlay layers, with drag/resize/rotate and
   per-frame visibility
 * Real GIF optimization, including a target-file-size mode, with a visual
-  Before/After comparison (draggable split, animated or frame-by-frame) of
-  the actual optimized output before you download it
+  Before/After comparison (draggable split, animated or frame-by-frame,
+  with pixel-level zoom/pan inspection) of the actual optimized output
+  before you download it
 * Static frame export to PNG/JPEG
 * Undo/redo and local autosave
 

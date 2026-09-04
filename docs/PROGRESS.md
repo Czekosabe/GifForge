@@ -819,3 +819,115 @@ established pattern of stress-testing rather than assuming correctness.
   the existing warn threshold`), authored as the repository's configured
   identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD`.
+
+---
+
+## 2026-09-04 23:19 — Product polish: pixel-level zoom/pan inspector + autosave-failure warning
+
+A focused product-polish session per this session's brief: fix remaining
+doc drift, add pixel-level zoom/pan to the Before/After Frame-mode viewer,
+and give storage failures a real user-facing (not just `console.warn`)
+signal. Explicitly did not touch MP4/WebM/APNG/ZIP/subtitles/batch/
+filters, Performance Mode's design, or a Safari-specific rendering
+fallback, per the session's own scope limits.
+
+### Fixed (documentation drift)
+
+* `docs/IMPLEMENTATION_STATUS.md`'s NEXT PRIORITIES still said "12 skipped"
+  for WebKit while the Browser test results table above it already
+  correctly said 13 (updated when the prior session's Reset-to-original
+  test was added) — corrected.
+
+### Added
+
+* **Before/After pixel-level zoom/pan inspector** (Frame mode only, by
+  design — Animated mode is untouched): Fit/100%/200%/400%/800% zoom with
+  pointer-drag pan, linked between Original and Optimized via one shared
+  normalized pan center (`src/tools/beforeAfterViewport.ts`, pure and unit
+  tested — 10 new tests) so the same visual region stays aligned even when
+  optimization reduced resolution, without stretching either source into
+  the other's pixel coordinate system. Purely a CSS-position/size + a
+  targeted `image-rendering: pixelated` change over the *already-decoded*
+  native-resolution canvases — no redraw, no re-decode, no worker call, so
+  it cannot trigger a re-optimize. The existing split divider got its own
+  independent pointer handlers so it keeps working correctly regardless of
+  zoom state, instead of fighting the new pan-drag handling on the same
+  container. A lightweight hover readout shows the inspected source-pixel
+  coordinate for both sides (no `getImageData`, so no throttling needed);
+  the optional RGBA color readout from the brief was deliberately skipped
+  — it would need a throttled `getImageData` call, adding real complexity/
+  risk for a "nice to have" — and is recorded in NEXT PRIORITIES instead of
+  silently dropped.
+* **Storage-health warning**: a small dedicated `storageHealthStore.ts`
+  (deliberately not folded into `jobStore` — storage health is a standing
+  condition, not an async operation) now surfaces a non-blocking,
+  deduplicated banner when autosave/asset persistence fails, instead of
+  only a `console.warn`. Deduplication: a failure only transitions out of
+  a *healthy* state, so repeated failures during the same outage (every
+  1.5s autosave retry) don't re-notify; a later success clears it so a
+  genuinely new failure can notify again; dismissing hides it without
+  curing the condition. Wired into `saveProjectAutosave` (both the
+  debounced save and the startup restore-read) and `saveAsset`. Editing
+  and export are fully unaffected by a storage failure — both are
+  independent of IndexedDB.
+
+### Bugs Found
+
+* **A self-caught test-authoring mistake, not an app bug**: the first
+  WebKit run after adding the storage-health tests showed 18 skipped
+  instead of the expected ~16 — both new tests had a
+  `test.skip(browserName === 'webkit', ...)` copied from a neighboring
+  test, but the second test ("does not show when storage is healthy")
+  never touches export/optimize and has no OffscreenCanvas dependency at
+  all. Removed the unnecessary skip and verified live that it actually
+  passes on WebKit — it does. Not counted as a product bug (nothing
+  shipped was wrong), but recorded since it changed the real, verified
+  WebKit skip count.
+
+### Performance
+
+* Zoom/pan verified cheap in practice, not just by design: the e2e test
+  changes zoom level and drags to pan, then asserts the displayed
+  "Optimized" size text is byte-identical to before and no new
+  "Optimizing…" toast appears — confirming no re-encode/re-decode is
+  triggered by any zoom/pan interaction.
+
+### Tests
+
+* `npx vitest run`: **74/74** (64 prior + 10 new
+  `beforeAfterViewport.test.ts` geometry tests).
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`, `npm run build`: all clean.
+* `npx playwright test --project=chromium`: **36/36** (31 prior + 3 zoom +
+  2 storage-health).
+* `npx playwright test --project=firefox`: **36/36**.
+* `npx playwright test --project=webkit`: **19 passed + 17 skipped + 0
+  failed** (one of the two new storage-health tests correctly runs there
+  too, per the "Bugs Found" fix above).
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: fixed the 12-vs-13 WebKit count drift;
+  rewrote the Before/After DONE bullet's zoom/pan coverage; added a
+  Storage-health-warning DONE bullet; resolved the matching Technical Debt
+  item; corrected TEST STATUS counts/table to the actual re-run numbers;
+  re-ranked NEXT PRIORITIES against the actual new state (WebKit
+  verification still #1; the deliberately-skipped RGBA color readout and
+  deeper Performance Mode work are the new #2/#4, not carried-over stale
+  items).
+* `docs/ARCHITECTURE.md`: added the zoom/pan linked-normalized-mapping
+  architecture to the existing "Visual Before/After comparison" section,
+  and a new "Storage-health notice" paragraph under "Storage (autosave)".
+* `README.md`: one-line addition noting pixel-level zoom/pan inspection,
+  no internals.
+
+### Git
+
+* Four commits this session, all authored as the repository's configured
+  identity, no AI attribution — verified individually via
+  `git show -s --format="%an <%ae>" HEAD` after each:
+  1. `docs: fix stale WebKit skip count in NEXT PRIORITIES (12 -> 13)`
+  2. `feat(optimize): add pixel-level zoom/pan to the Before/After Frame mode`
+  3. `feat(storage): add a non-blocking, deduplicated autosave-failure warning`
+  4. (this documentation entry)
+* No remote configured (`git remote -v` empty at both start and end of
+  session) — commits remain local, consistent with every prior session.
