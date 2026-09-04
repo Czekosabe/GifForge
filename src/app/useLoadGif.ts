@@ -85,6 +85,13 @@ export function useLoadGif() {
  */
 export async function startNewProject(): Promise<void> {
   usePlaybackStore.getState().pause()
+  // Any job still 'running' (e.g. an export/optimize started, then abandoned by starting
+  // a new project before it finished) has its worker call terminated below without ever
+  // resolving or rejecting — nothing would otherwise mark it done, leaving its progress
+  // toast stuck on screen forever with no way to dismiss it (JobStatusBar only offers a
+  // dismiss button for 'failed' jobs).
+  const jobStore = useJobStore.getState()
+  jobStore.jobs.filter((j) => j.status === 'running').forEach((j) => jobStore.cancelJob(j.id))
   terminatePipeline()
   useFrameCacheStore.getState().clear()
   useProjectStore.getState().closeProject() // triggers useSyncPlaybackFrameCount to zero frameCount

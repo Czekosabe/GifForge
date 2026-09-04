@@ -19,6 +19,37 @@ test.describe('resilience', () => {
     await expect(page.locator('text=No layers yet.')).toBeVisible()
   })
 
+  test('starting New Project mid-optimize does not leave a permanently stuck job toast', async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
+    // Regression: startNewProject() used to terminate the worker without touching the
+    // global job store, so a still-'running' job's Comlink call never resolved or
+    // rejected — nothing ever marked it done, leaving its progress toast on screen
+    // forever with no way to dismiss it (JobStatusBar only offers dismiss for 'failed').
+    await uploadGif(page, ROTATING_EARTH_GIF)
+    await page.locator('button[title="Optimize"]').click()
+    await page.locator('button:has-text("Target Size")').click()
+    await page.getByRole('button', { name: '256KB', exact: true }).click()
+    await page.locator('text=Allow FPS reduction').click()
+    await page.locator('text=Allow frame dropping').click()
+    await page.locator('text=Allow resolution reduction').click()
+    await page.locator('text=Keep dimensions').click() // uncheck
+    await page.locator('button:has-text("Run optimization")').click()
+    await expect(page.locator('button:has-text("Cancel")')).toBeVisible({ timeout: 5_000 })
+
+    await page.locator('button:has-text("New")').first().click()
+    await page.locator('button:has-text("Yes, start new")').click()
+    await expect(page.locator('text=Choose a GIF file')).toBeVisible({ timeout: 5_000 })
+
+    // The old job's toast must be gone immediately, not just eventually.
+    await expect(page.locator('text=Trying 256 colors')).not.toBeVisible()
+    await expect(page.locator('.fixed.bottom-4.right-4')).not.toBeVisible()
+
+    // Wait past when the abandoned search would have finished on its own, to rule out
+    // it silently reappearing (e.g. a delayed progress callback resurrecting the toast).
+    await page.waitForTimeout(9_000)
+    await expect(page.locator('.fixed.bottom-4.right-4')).not.toBeVisible()
+  })
+
   test('"Reset to original" removes layers and leaves the app fully functional afterward', async ({ page }) => {
     await uploadGif(page, LOADING_ICON_GIF)
     await page.locator('button[title="Overlay"]').click()
