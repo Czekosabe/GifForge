@@ -235,41 +235,52 @@ class GifPipeline {
     onProgress?: ProgressCallback,
   ): Promise<Uint8Array> {
     this.assertLoaded()
+    // this.abortController doubles as the "an export or optimize is in flight" flag —
+    // both operations share this single worker instance, so without this guard a user
+    // switching tools mid-export (nothing in the UI prevents it) could start a second
+    // heavy operation that overwrites this field out from under the first one, making
+    // "Cancel" abort whichever job started most recently instead of the one intended.
+    if (this.abortController) {
+      throw new Error('Another export or optimization is already running. Cancel it or wait for it to finish first.')
+    }
     this.abortController = new AbortController()
     const signal = this.abortController.signal
 
-    const frameRangeFrames =
-      settings.frameRange.trim().length > 0
-        ? filterByFrameRange(edits, settings.frameRange)
-        : edits
+    try {
+      const frameRangeFrames =
+        settings.frameRange.trim().length > 0
+          ? filterByFrameRange(edits, settings.frameRange)
+          : edits
 
-    onProgress?.(0, 'Rendering frames…')
-    const { rendered, width, height } = await this.renderAllFrames(frameRangeFrames, layers, (f, m) => onProgress?.((f ?? 0) * 0.7, m))
+      onProgress?.(0, 'Rendering frames…')
+      const { rendered, width, height } = await this.renderAllFrames(frameRangeFrames, layers, (f, m) => onProgress?.((f ?? 0) * 0.7, m))
 
-    const scale = settings.scalePercent / 100
-    const scaledWidth = Math.max(1, Math.round(width * scale))
-    const scaledHeight = Math.max(1, Math.round(height * scale))
-    const scaledFrames =
-      scale === 1
-        ? rendered
-        : rendered.map((f) => ({ delayMs: f.delayMs, rgba: this.scaleRgba(f.rgba, width, height, scaledWidth, scaledHeight) }))
+      const scale = settings.scalePercent / 100
+      const scaledWidth = Math.max(1, Math.round(width * scale))
+      const scaledHeight = Math.max(1, Math.round(height * scale))
+      const scaledFrames =
+        scale === 1
+          ? rendered
+          : rendered.map((f) => ({ delayMs: f.delayMs, rgba: this.scaleRgba(f.rgba, width, height, scaledWidth, scaledHeight) }))
 
-    onProgress?.(0.75, 'Encoding GIF…')
-    const bytes = await encodeGif(scaledFrames, {
-      width: scaledWidth,
-      height: scaledHeight,
-      maxColors: settings.maxColors,
-      dither: settings.dither,
-      ditherStrength: 1,
-      loopMode: settings.loopMode,
-      customLoopCount: settings.customLoopCount,
-      signal,
-      onProgress: (f) => onProgress?.(0.75 + f * 0.25, 'Encoding GIF…'),
-    })
+      onProgress?.(0.75, 'Encoding GIF…')
+      const bytes = await encodeGif(scaledFrames, {
+        width: scaledWidth,
+        height: scaledHeight,
+        maxColors: settings.maxColors,
+        dither: settings.dither,
+        ditherStrength: 1,
+        loopMode: settings.loopMode,
+        customLoopCount: settings.customLoopCount,
+        signal,
+        onProgress: (f) => onProgress?.(0.75 + f * 0.25, 'Encoding GIF…'),
+      })
 
-    onProgress?.(1, 'Done')
-    this.abortController = null
-    return Comlink.transfer(bytes, [bytes.buffer as ArrayBuffer])
+      onProgress?.(1, 'Done')
+      return Comlink.transfer(bytes, [bytes.buffer as ArrayBuffer])
+    } finally {
+      this.abortController = null
+    }
   }
 
   async optimize(
@@ -279,68 +290,74 @@ class GifPipeline {
     onProgress?: ProgressCallback,
   ) {
     this.assertLoaded()
+    // See the matching guard/comment in exportGif — same shared-worker-instance reasoning.
+    if (this.abortController) {
+      throw new Error('Another export or optimization is already running. Cancel it or wait for it to finish first.')
+    }
     this.abortController = new AbortController()
     const signal = this.abortController.signal
 
-    onProgress?.(0, 'Rendering frames…')
-    const { rendered, width, height } = await this.renderAllFrames(edits, layers, (f, m) => onProgress?.((f ?? 0) * 0.3, m))
+    try {
+      onProgress?.(0, 'Rendering frames…')
+      const { rendered, width, height } = await this.renderAllFrames(edits, layers, (f, m) => onProgress?.((f ?? 0) * 0.3, m))
 
-    if (settings.preset === 'target-size' && settings.targetSizeBytes) {
-      const result = await runTargetSizeSearch({
-        frames: rendered,
-        width,
-        height,
-        targetBytes: settings.targetSizeBytes,
-        keepDimensions: settings.keepDimensions,
-        allowFpsReduction: settings.allowFpsReduction,
-        allowFrameDropping: settings.allowFrameDropping,
-        allowResolutionReduction: settings.allowResolutionReduction,
+      if (settings.preset === 'target-size' && settings.targetSizeBytes) {
+        const result = await runTargetSizeSearch({
+          frames: rendered,
+          width,
+          height,
+          targetBytes: settings.targetSizeBytes,
+          keepDimensions: settings.keepDimensions,
+          allowFpsReduction: settings.allowFpsReduction,
+          allowFrameDropping: settings.allowFrameDropping,
+          allowResolutionReduction: settings.allowResolutionReduction,
+          loopMode: 'forever',
+          customLoopCount: 0,
+          signal,
+          onProgress: (f, m) => onProgress?.(0.3 + f * 0.7, m),
+        })
+        return {
+          bytes: Comlink.transfer(result.bytes, [result.bytes.buffer as ArrayBuffer]),
+          achievedBytes: result.achievedBytes,
+          achievedTarget: result.achievedTarget,
+          message: result.message,
+          width,
+          height,
+        }
+      }
+
+      const presetSettings = resolvePreset(settings)
+      const scale = presetSettings.scalePercent / 100
+      const scaledWidth = Math.max(1, Math.round(width * scale))
+      const scaledHeight = Math.max(1, Math.round(height * scale))
+      const scaledFrames =
+        scale === 1
+          ? rendered
+          : rendered.map((f) => ({ delayMs: f.delayMs, rgba: this.scaleRgba(f.rgba, width, height, scaledWidth, scaledHeight) }))
+
+      onProgress?.(0.5, 'Encoding…')
+      const bytes = await encodeGif(scaledFrames, {
+        width: scaledWidth,
+        height: scaledHeight,
+        maxColors: presetSettings.maxColors,
+        dither: presetSettings.dither,
+        ditherStrength: presetSettings.ditherStrength,
         loopMode: 'forever',
         customLoopCount: 0,
         signal,
-        onProgress: (f, m) => onProgress?.(0.3 + f * 0.7, m),
+        onProgress: (f) => onProgress?.(0.5 + f * 0.5, 'Encoding…'),
       })
-      this.abortController = null
+
       return {
-        bytes: Comlink.transfer(result.bytes, [result.bytes.buffer as ArrayBuffer]),
-        achievedBytes: result.achievedBytes,
-        achievedTarget: result.achievedTarget,
-        message: result.message,
-        width,
-        height,
+        bytes: Comlink.transfer(bytes, [bytes.buffer as ArrayBuffer]),
+        achievedBytes: bytes.length,
+        achievedTarget: true,
+        message: `Optimized to ${(bytes.length / 1024).toFixed(1)} KB.`,
+        width: scaledWidth,
+        height: scaledHeight,
       }
-    }
-
-    const presetSettings = resolvePreset(settings)
-    const scale = presetSettings.scalePercent / 100
-    const scaledWidth = Math.max(1, Math.round(width * scale))
-    const scaledHeight = Math.max(1, Math.round(height * scale))
-    const scaledFrames =
-      scale === 1
-        ? rendered
-        : rendered.map((f) => ({ delayMs: f.delayMs, rgba: this.scaleRgba(f.rgba, width, height, scaledWidth, scaledHeight) }))
-
-    onProgress?.(0.5, 'Encoding…')
-    const bytes = await encodeGif(scaledFrames, {
-      width: scaledWidth,
-      height: scaledHeight,
-      maxColors: presetSettings.maxColors,
-      dither: presetSettings.dither,
-      ditherStrength: presetSettings.ditherStrength,
-      loopMode: 'forever',
-      customLoopCount: 0,
-      signal,
-      onProgress: (f) => onProgress?.(0.5 + f * 0.5, 'Encoding…'),
-    })
-
-    this.abortController = null
-    return {
-      bytes: Comlink.transfer(bytes, [bytes.buffer as ArrayBuffer]),
-      achievedBytes: bytes.length,
-      achievedTarget: true,
-      message: `Optimized to ${(bytes.length / 1024).toFixed(1)} KB.`,
-      width: scaledWidth,
-      height: scaledHeight,
+    } finally {
+      this.abortController = null
     }
   }
 

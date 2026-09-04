@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { LOADING_ICON_GIF, OVERLAY_RED_PNG, ROTATING_EARTH_GIF, uploadGif } from './helpers'
+import { LOADING_ICON_GIF, OFFSCREEN_CANVAS_UNSUPPORTED_REASON, OVERLAY_RED_PNG, ROTATING_EARTH_GIF, uploadGif } from './helpers'
 
 test.describe('resilience', () => {
   test('New Project fully closes the current project and loads a different GIF with no leftover layers', async ({ page }) => {
@@ -82,6 +82,55 @@ test.describe('resilience', () => {
     await page.locator('input[type=file]').setInputFiles(LOADING_ICON_GIF)
     await page.waitForSelector('button[title="Crop"]', { timeout: 30_000 })
     await expect(page.locator('.h-9.shrink-0').first()).toContainText('24 frames')
+
+    expect(pageErrors).toEqual([])
+  })
+
+  test('starting Export while an Optimize search is still running is rejected cleanly, and the app stays fully usable afterward', async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
+    test.slow() // runs a real bounded target-size search (~8s) in the background
+    // Nothing in the UI stops a user from switching tools mid-job and starting a second
+    // heavy operation on the same shared worker instance. Regression test for the fix in
+    // pipeline.worker.ts: exportGif/optimize now guard against a second one starting while
+    // one is already in flight, instead of silently racing on the shared abortController.
+    const pageErrors: string[] = []
+    page.on('pageerror', (err) => pageErrors.push(err.message))
+
+    await uploadGif(page, ROTATING_EARTH_GIF)
+    await page.locator('button[title="Optimize"]').click()
+    await page.locator('button:has-text("Target Size")').click()
+    await page.getByRole('button', { name: '256KB', exact: true }).click()
+    await page.locator('text=Allow FPS reduction').click()
+    await page.locator('text=Allow frame dropping').click()
+    await page.locator('text=Allow resolution reduction').click()
+    await page.locator('text=Keep dimensions').click() // uncheck
+    await page.locator('button:has-text("Run optimization")').click()
+    await expect(page.locator('button:has-text("Cancel")')).toBeVisible({ timeout: 5_000 })
+
+    // Switch tools mid-job (allowed by the UI) and try to start a second heavy operation.
+    // Switching tools unmounts OptimizePanel (losing its local "running"/result state, by
+    // design — unrelated to this fix), but the background job itself is untouched by that.
+    await page.locator('button[title="Export"]').click()
+    await page.locator('button:has-text("Export GIF")').click()
+
+    await expect(page.locator('text=Another export or optimization is already running.').first()).toBeVisible({
+      timeout: 5_000,
+    })
+
+    // Give the background target-size search (up to ~8s) time to finish on its own before
+    // proving the worker is healthy again — this also confirms the in-flight guard actually
+    // releases afterward (the `finally` reset), not just that it blocks a second call.
+    await page.waitForTimeout(10_000)
+
+    // The app must still be fully usable: a fresh optimization from a clean panel state
+    // must complete normally, not be permanently stuck behind the "already running" guard.
+    await page.locator('button[title="Optimize"]').click()
+    await page.locator('button:has-text("Aggressive")').click()
+    await page.locator('button:has-text("Run optimization")').click()
+    await expect(page.locator('text=Before / After')).toBeVisible({ timeout: 30_000 })
 
     expect(pageErrors).toEqual([])
   })
