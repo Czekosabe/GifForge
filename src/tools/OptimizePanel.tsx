@@ -1,37 +1,46 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../state/projectStore'
+import { usePlaybackStore } from '../state/playbackStore'
 import { useJobStore } from '../state/jobStore'
 import { getPipeline, proxyProgress } from '../workers/client'
 import { downloadBytes } from '../utils/download'
 import { Section, Button, Checkbox } from '../components/ui/Section'
 import { NumberField } from '../components/ui/NumberField'
-import type { OptimizationSettings } from '../types/project'
+import { BeforeAfterCompare } from './BeforeAfterCompare'
+import { useOptimizeComparison, type OptimizeResultData } from './useOptimizeComparison'
+import type { OptimizationSettings, Project } from '../types/project'
 
 const TARGET_PRESETS_KB = [256, 512, 1024, 2048, 5120]
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
-}
-
 export function OptimizePanel() {
   const project = useProjectStore((s) => s.project)
+  const sourceBlob = useProjectStore((s) => s.sourceBlob)
   const setOptimizationSettings = useProjectStore((s) => s.setOptimizationSettings)
+  const currentFrameIndex = usePlaybackStore((s) => s.currentFrameIndex)
   const startJob = useJobStore((s) => s.startJob)
   const updateJob = useJobStore((s) => s.updateJob)
   const completeJob = useJobStore((s) => s.completeJob)
   const failJob = useJobStore((s) => s.failJob)
 
-  const [result, setResult] = useState<{ bytes: Uint8Array; achievedBytes: number; achievedTarget: boolean; message: string } | null>(
-    null,
-  )
+  const [result, setResult] = useState<OptimizeResultData | null>(null)
   const [running, setRunning] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
+  // The Project this result was produced from — if the project changes afterward (further
+  // edits, different optimize settings, a New Project), the result no longer describes the
+  // current project and must not keep looking current. See useEffect below.
+  const resultProjectRef = useRef<Project | null>(null)
+
+  const comparison = useOptimizeComparison(result, sourceBlob)
+
+  useEffect(() => {
+    if (resultProjectRef.current && resultProjectRef.current !== project) {
+      setResult(null)
+      resultProjectRef.current = null
+    }
+  }, [project])
 
   if (!project) return null
   const settings = project.optimizationSettings
-  const originalSize = project.metadata.sourceFileSizeBytes
 
   function patch(p: Partial<OptimizationSettings>) {
     setOptimizationSettings(p)
@@ -41,6 +50,7 @@ export function OptimizePanel() {
     if (!project) return
     setRunning(true)
     setResult(null)
+    resultProjectRef.current = null
     const id = startJob('optimize', 'Optimizing…', true)
     setJobId(id)
     try {
@@ -52,6 +62,7 @@ export function OptimizePanel() {
         proxyProgress((fraction, message) => updateJob(id, { progress: fraction, message })),
       )
       setResult(res)
+      resultProjectRef.current = project
       completeJob(id)
     } catch (err) {
       // A user-initiated cancel already set this job to 'cancelled' (see cancel() below);
@@ -70,8 +81,6 @@ export function OptimizePanel() {
     getPipeline().cancel()
     if (jobId) useJobStore.getState().cancelJob(jobId)
   }
-
-  const percentSaved = result ? Math.max(0, Math.round((1 - result.achievedBytes / originalSize) * 100)) : 0
 
   return (
     <div>
@@ -146,18 +155,18 @@ export function OptimizePanel() {
 
       {result && (
         <Section title="Before / After">
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="rounded bg-surface-2 p-2">
-              <p className="text-slate-500">Original</p>
-              <p className="text-slate-200">{formatBytes(originalSize)}</p>
-            </div>
-            <div className="rounded bg-surface-2 p-2">
-              <p className="text-slate-500">Optimized</p>
-              <p className="text-emerald-400">{formatBytes(result.achievedBytes)}</p>
-            </div>
-          </div>
-          <p className="text-xs text-slate-300">{percentSaved}% smaller</p>
           <p className={`text-[11px] ${result.achievedTarget ? 'text-emerald-400' : 'text-amber-400'}`}>{result.message}</p>
+
+          {comparison.status === 'loading' && <p className="text-xs text-slate-400">Preparing visual comparison…</p>}
+          {comparison.status === 'error' && (
+            <p className="text-xs text-amber-400">
+              Couldn't prepare the visual comparison ({comparison.error}) — the download below is still the real optimized file.
+            </p>
+          )}
+          {comparison.status === 'ready' && comparison.original && comparison.optimized && (
+            <BeforeAfterCompare original={comparison.original} optimized={comparison.optimized} currentEditorFrameIndex={currentFrameIndex} />
+          )}
+
           <Button variant="primary" onClick={() => downloadBytes(result.bytes, `${project.metadata.name}-optimized.gif`, 'image/gif')}>
             Download optimized GIF
           </Button>

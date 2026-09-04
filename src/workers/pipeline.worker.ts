@@ -45,6 +45,16 @@ export interface PreviewFrameBundle {
   bitmap: ImageBitmap
 }
 
+export interface CompareDecodeResult {
+  width: number
+  height: number
+  frameCount: number
+  durationMs: number
+  fileSizeBytes: number
+  frameDelaysMs: number[]
+  bitmaps: ImageBitmap[]
+}
+
 type ProgressCallback = (fraction: number | null, message: string) => void
 
 class GifPipeline {
@@ -111,6 +121,36 @@ class GifPipeline {
       }
     }
     return Comlink.transfer(bitmaps, bitmaps)
+  }
+
+  /**
+   * Decodes a standalone GIF byte buffer for the visual Before/After comparison viewer —
+   * deliberately independent of `this.sourceFrames`/`this.metadata` (the currently-loaded
+   * project) so decoding a comparison side never disturbs the live editing session. Used
+   * for both the original upload's bytes and the real optimized output's bytes, so the
+   * viewer always shows genuine decoded pixels, never a synthetic/filtered approximation.
+   * No OffscreenCanvas dependency (createImageBitmap from ImageData works without it), so
+   * this works even in engines that can't run export/optimize itself.
+   */
+  async decodeForCompare(buffer: ArrayBuffer): Promise<CompareDecodeResult> {
+    let result
+    try {
+      result = decodeGif(buffer, { fileName: 'compare' })
+    } catch (err) {
+      if (err instanceof GifDecodeError) throw new Error(err.message)
+      throw err
+    }
+    const { width, height } = result.metadata
+    const bitmaps = await Promise.all(result.frames.map((f) => createImageBitmap(new ImageData(f.rgba, width, height))))
+    return {
+      width,
+      height,
+      frameCount: result.metadata.frameCount,
+      durationMs: result.metadata.durationMs,
+      fileSizeBytes: result.metadata.fileSizeBytes,
+      frameDelaysMs: result.frames.map((f) => f.delayMs),
+      bitmaps: Comlink.transfer(bitmaps, bitmaps),
+    }
   }
 
   async getThumbnail(frameIndex: number, maxSize: number): Promise<ImageBitmap> {
