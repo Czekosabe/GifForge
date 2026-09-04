@@ -696,7 +696,7 @@ they start costing more than they saved:
 
 Ranked by expected value given the current state — highest first:
 
-1. **Get WebKit's 12 skipped tests passing**, if real Safari/WebKit support
+1. **Get WebKit's 13 skipped tests passing**, if real Safari/WebKit support
    turns out to matter for the target audience. Requires either confirming
    real Safari *does* support OffscreenCanvas (in which case the gap is
    specific to Playwright's bundled WebKit test build, not a real product
