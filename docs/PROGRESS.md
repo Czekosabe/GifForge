@@ -516,3 +516,53 @@ is loaded, never based on job state.
   jobs on the shared worker`), authored as the repository's configured
   identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD`.
+
+---
+
+## 2026-09-04 21:15 — Real bug: New Project mid-job left a frozen, undismissable toast
+
+Kept auditing state-consistency-after-various-actions per this session's
+brief rather than stopping after bug #10. Asked: what happens to a running
+job if the project it belongs to gets discarded mid-flight? Verified with
+a throwaway probe script before touching any source, to make sure this was
+a real bug and not a false alarm.
+
+### Fixed
+
+* **Bug #11** (`docs/IMPLEMENTATION_STATUS.md`): `startNewProject()`
+  terminates the worker but never touched the global job store. A job
+  still `'running'` at that moment never resolves or rejects once its
+  worker call is killed, so nothing ever marks it done — its toast stayed
+  on screen forever, frozen at its last message/progress, and
+  `JobStatusBar` only offers a dismiss button for `'failed'` jobs, so it
+  could never be cleared by the user short of a full reload. Reproduced
+  directly: started a target-size search, immediately started a New
+  Project, watched the toast sit frozen 12+ seconds past when the search
+  would have finished naturally. Fixed by cancelling every `'running'` job
+  in the store before terminating the pipeline in `startNewProject()`.
+
+### Added
+
+* `e2e/resilience.spec.ts`: starts a real optimize job, triggers New
+  Project mid-run, and asserts the toast disappears immediately and stays
+  gone 9+ seconds later.
+
+### Verified
+
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`, `npx vitest run` (64/64),
+  `npm run build`: all clean.
+* `npx playwright test --project=chromium`: 29/29 (up from 28).
+* `npx playwright test --project=firefox`: 29/29.
+* `npx playwright test --project=webkit`: 18 passed + 11 skipped (new test
+  skips there too, same OffscreenCanvas reason as the rest of this suite).
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: added bug #11 with the full root-cause
+  and fix account.
+
+### Git
+
+* One commit (`fix(app): starting New Project mid-job no longer leaves a
+  stuck job toast`), authored as the repository's configured identity, no
+  AI attribution — verified via `git show -s --format="%an <%ae>" HEAD`.

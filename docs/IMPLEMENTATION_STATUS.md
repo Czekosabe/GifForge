@@ -496,6 +496,28 @@ status" below for exactly what was checked.
     stuck UI) and that a fresh optimization still completes normally
     afterward, proving the guard actually releases rather than getting
     permanently stuck.
+11. **A running job's toast survived New Project, frozen forever**:
+    `startNewProject()` (`useLoadGif.ts`) terminates the worker to free
+    memory but never touched the global job store. A job still `'running'`
+    at that moment — e.g. an optimize search abandoned by starting a new
+    project before it finished — has its Comlink call terminated without
+    ever resolving or rejecting, so nothing ever marked it done; its
+    progress toast stayed on screen forever, frozen at whatever
+    message/progress it last had. Worse, `JobStatusBar` only renders a
+    dismiss button for `'failed'` jobs, so a stuck `'running'` one could
+    never be cleared by the user at all short of a full page reload.
+    Reproduced directly with a throwaway probe script (not committed):
+    started a target-size search, immediately started a New Project, and
+    watched the "Trying 256 colors…" toast sit frozen on screen 12+
+    seconds after the search would have finished on its own. Fixed by
+    cancelling every currently-`'running'` job in the store before
+    terminating the pipeline in `startNewProject()` — the same resolution
+    a user-clicked Cancel already provides for a single job, just applied
+    to whatever job(s) happen to be in flight when the project itself is
+    discarded. Verified live: a new e2e test starts a real optimize job,
+    triggers New Project mid-run, and confirms the toast disappears
+    immediately and stays gone 9+ seconds later (ruling out a delayed
+    progress callback resurrecting it).
 
 ## Verification rounds
 
