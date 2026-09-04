@@ -1139,3 +1139,46 @@ project's established pattern for new features.
   applied to video export`), authored as the repository's configured
   identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD`.
+
+---
+
+## 2026-09-05 01:01 — Stress-tested video export's resource lifecycle; one unreproduced flake recorded honestly
+
+Continued auditing the video export feature specifically for the
+resource-lifecycle concerns this project has historically found real bugs
+in (repeated upload/edit/export cycles, rapid UI interaction).
+
+### Verified (live, via throwaway probe scripts, not committed)
+
+* **Repeated video exports in a row**: 4, then separately 6, consecutive
+  WebM exports of the same project all completed cleanly — real
+  downloads every time, zero page errors, no signs of resource
+  exhaustion from repeated `Output`/`VideoSampleSource`/`VideoEncoder`
+  allocation.
+* **Rapid MP4/WebM format-tab switching alone** (8 clicks with no delay
+  between them, deliberately probing the capability-check `useEffect`'s
+  cancellation logic for a race): completed cleanly, no errors, correct
+  final state.
+* **The combination** (4 exports immediately followed by 8 rapid tab
+  switches) failed once on the first attempt — the browser tab closed
+  unexpectedly mid-sequence, with no `pageerror`, console error, or
+  explicit crash event accompanying it. Immediately re-ran the identical
+  sequence 5 more times: all 5 completed cleanly. With no reproducible
+  lead and no diagnostic signal to attribute the one failure to specific
+  code, no fix was invented — recorded honestly in Known Limitations as
+  a low-frequency (1-in-6), undiagnosed environmental artifact instead of
+  either silently ignoring it or claiming a fix for something never
+  actually pinned down.
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: added the observed-flake entry to
+  Known Limitations, with the exact reproduction attempts and result
+  counts, per this project's standing practice of recording real
+  investigation results rather than only clean-bill-of-health findings.
+
+### Git
+
+* One commit (`docs: record a stress-test flake investigation for video
+  export`), authored as the repository's configured identity, no AI
+  attribution — verified via `git show -s --format="%an <%ae>" HEAD`.

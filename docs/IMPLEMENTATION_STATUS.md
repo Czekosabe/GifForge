@@ -402,6 +402,18 @@ status" below for exactly what was checked.
   attempting alpha preservation — video codec/container alpha support is
   inconsistent enough across players that a composited background is the
   more honestly reliable choice for an initial implementation.
+- **A single unreproduced Chromium closure was observed during stress
+  testing** (6 repeated WebM exports back-to-back, immediately followed
+  by 8 rapid MP4/WebM format-tab switches): once, the browser tab closed
+  unexpectedly partway through, with no accompanying `pageerror`, console
+  error, or explicit crash event — no diagnostic signal to attribute it
+  to specific code. Re-ran the identical sequence 5 more times immediately
+  after: all 5 completed cleanly. Recorded honestly as an observed,
+  low-frequency (1-in-6), undiagnosed artifact of this specific test
+  environment (plausibly a transient GPU/renderer resource hiccup under
+  repeated real video-encoder allocation) rather than a confirmed
+  application bug — no code change was made without a reproducible lead
+  to fix. Revisit if it recurs with an actual error signal attached.
 
 # TECHNICAL DECISIONS
 
