@@ -98,4 +98,29 @@ test.describe('visual Before/After comparison', () => {
     // 9. No page errors occurred anywhere in this flow.
     expect(pageErrors).toEqual([])
   })
+
+  test('"Reset to original" invalidates a stale comparison result, not just New Project', async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
+    const pageErrors: string[] = []
+    page.on('pageerror', (err) => pageErrors.push(err.message))
+
+    await uploadGif(page, LOADING_ICON_GIF)
+    await page.locator('button[title="Optimize"]').click()
+    await page.locator('button:has-text("Aggressive")').click()
+    await page.locator('button:has-text("Run optimization")').click()
+    await page.locator('text=Before / After').waitFor({ timeout: 30_000 })
+    await expect(page.locator('canvas[data-testid="compare-optimized-canvas"]')).toBeVisible({ timeout: 15_000 })
+
+    // Reset to original is a real project-changing action distinct from New Project — the
+    // comparison result was produced from the pre-reset project and must not keep showing.
+    await page.locator('button[title="History"]').click()
+    await page.locator('button:has-text("Reset to original")').click()
+    await page.waitForTimeout(300)
+
+    await page.locator('button[title="Optimize"]').click()
+    await expect(page.locator('text=Before / After')).not.toBeVisible()
+    await expect(page.locator('canvas[data-testid="compare-optimized-canvas"]')).not.toBeVisible()
+
+    expect(pageErrors).toEqual([])
+  })
 })
