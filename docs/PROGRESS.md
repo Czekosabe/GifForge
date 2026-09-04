@@ -1349,3 +1349,58 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
 * One commit (`fix: clamp custom GIF loop count to the encoder's 16-bit
   field range`), authored as the repository's configured identity, no AI
   attribution — verified via `git show -s --format="%an <%ae>" HEAD`.
+
+## 2026-09-05 01:32 — Fixed a real, severe bug: a large non-square Resize could silently download a corrupt GIF
+
+### Audit
+
+* Continuing the same session's pattern (three prior fixes were all
+  "unbounded numeric field reaches a fixed-width encoder field"), checked
+  every `NumberField` in the app for a missing `max`. `ResizePanel.tsx`'s
+  Width/Height had `min={1}` but no upper bound. GIF's logical screen
+  descriptor and image descriptor both store width/height as 16-bit
+  unsigned ints, and `gifenc` writes them with no overflow check.
+* Reproduced live in a real browser before assuming anything: a *square*
+  oversized resize (70000×70000) already fails safely with a genuine,
+  visible `OffscreenCanvasRenderingContext2D` out-of-memory error — good,
+  not silent. But total pixel count, not either dimension alone, triggers
+  that failure. A *wide-but-short* resize (70000×4) stays small enough in
+  memory to succeed completely: the downloaded file's actual raw header
+  bytes read **4464×4** (70000 mod 65536) — a genuinely corrupt file,
+  downloaded with a plausible size and zero error, anywhere.
+
+### Fix
+
+* Fixed at two layers: `ResizePanel.tsx` now has `max={65535}` on both
+  Width and Height (consistent with Crop's existing source-bounded max).
+* The real safety net: `encoder.ts`'s `encodeGif` now throws a clear error
+  for any width/height over 65535 before attempting to encode — this is
+  the layer that actually matters, since crop+resize+rotate could in
+  principle combine to exceed 65535 even with Resize alone bounded.
+* Verified the fix live, the same way the bug was found: with the UI
+  clamp in place, typing 70000 now settles at 65535 (a valid, non-
+  wrapping value), and the downloaded file's raw header correctly reads
+  65535×4, matching exactly — re-confirmed with actual byte inspection,
+  not just "no error shown."
+* New unit test calls `encodeGif` directly at 70000×4 (bypassing the UI
+  layer entirely) and asserts it rejects — confirmed this test genuinely
+  fails without the fix (temporarily reverted `encoder.ts`, saw the old
+  behavior return corrupted bytes instead of throwing, then restored it).
+* Full verification: `npm run typecheck` clean, `npm run lint` clean,
+  `npm test` 106/106 passing (up from 105), and `core-editing.spec.ts` +
+  `optimize.spec.ts` + `frame-operations.spec.ts` re-run on Chromium
+  (15/15) to confirm the new guard doesn't affect any normal-sized
+  encode path.
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: added bug #15 to "Bugs found and
+  fixed" with the full live-verified before/after, updated the unit test
+  count in TEST STATUS.
+
+### Git
+
+* One commit (`fix: reject GIF dimensions beyond the format's 16-bit
+  limit instead of silently corrupting output`), authored as the
+  repository's configured identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD`.

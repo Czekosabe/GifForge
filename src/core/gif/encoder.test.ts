@@ -99,6 +99,27 @@ describe('encodeGif round-trip', () => {
     expect(roundTripped.metadata.loopCount).toBe(65535)
   })
 
+  it('rejects encoding beyond the GIF format\'s 16-bit dimension limit instead of silently wrapping it', async () => {
+    // Real reproduction: a "wide but short" resize (e.g. 70000x4) stays well within memory
+    // limits (so it doesn't hit an out-of-memory error the way a large square resize would),
+    // but 70000 overflows the 16-bit width field gifenc writes with no bounds check of its own
+    // (70000 wraps to 4464) — this used to download successfully as a silently corrupt file.
+    const width = 70000
+    const height = 4
+    const rgba = new Uint8ClampedArray(width * height * 4).fill(255)
+    await expect(
+      encodeGif([{ rgba, delayMs: 100 }], {
+        width,
+        height,
+        maxColors: 2,
+        dither: false,
+        ditherStrength: 0,
+        loopMode: 'forever',
+        customLoopCount: 0,
+      }),
+    ).rejects.toThrow(/65535/)
+  })
+
   it('rejects encoding zero frames', async () => {
     await expect(
       encodeGif([], {

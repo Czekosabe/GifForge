@@ -48,8 +48,8 @@ export function ResizePanel() {
 
       {mode === 'pixels' ? (
         <Section title="Dimensions (px)">
-          <NumberField label="Width" value={current.width} min={1} onChange={() => {}} onCommit={(w) => applyPixels(w, current.height)} />
-          <NumberField label="Height" value={current.height} min={1} onChange={() => {}} onCommit={(h) => applyPixels(current.width, h)} />
+          <NumberField label="Width" value={current.width} min={1} max={65535} onChange={() => {}} onCommit={(w) => applyPixels(w, current.height)} />
+          <NumberField label="Height" value={current.height} min={1} max={65535} onChange={() => {}} onCommit={(h) => applyPixels(current.width, h)} />
           <Checkbox label="Keep aspect ratio" checked={lockAspect} onChange={setLockAspect} />
         </Section>
       ) : (

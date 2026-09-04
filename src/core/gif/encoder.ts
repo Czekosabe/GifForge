@@ -37,9 +37,23 @@ function resolveRepeat(loopMode: LoopMode, customLoopCount: number): number {
   return Math.min(65535, Math.max(0, customLoopCount))
 }
 
+/** The GIF format's logical screen descriptor and image descriptor both store width/height as
+ * 16-bit unsigned ints (`gifenc` writes them via raw byte masking with no overflow check) — a
+ * dimension beyond this silently wraps (e.g. 70000 -> 4464) instead of erroring, producing a
+ * file that downloads successfully but is genuinely corrupt: decoders read pixel data at the
+ * wrapped, wrong stride. Reachable in practice via a large, non-square Resize (a "wide but
+ * short" resize keeps total pixel/memory cost low enough to avoid an out-of-memory error, which
+ * is the only thing that currently stops an even larger, square resize). */
+const MAX_GIF_DIMENSION = 65535
+
 export async function encodeGif(frames: EncodeFrameInput[], options: EncodeOptions): Promise<Uint8Array> {
   if (frames.length === 0) {
     throw new Error('Cannot encode a GIF with zero frames.')
+  }
+  if (options.width > MAX_GIF_DIMENSION || options.height > MAX_GIF_DIMENSION) {
+    throw new Error(
+      `Cannot encode a GIF at ${options.width}×${options.height} — the GIF format's maximum dimension is ${MAX_GIF_DIMENSION}px per side.`,
+    )
   }
 
   const clampedColors = Math.max(2, Math.min(256, options.maxColors))

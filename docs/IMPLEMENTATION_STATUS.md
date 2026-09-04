@@ -488,7 +488,7 @@ status" below for exactly what was checked.
 
 # TEST STATUS
 
-- **Unit tests**: 105 passing (`npx vitest run`), 11 files — frame-range
+- **Unit tests**: 106 passing (`npx vitest run`), 11 files — frame-range
   parsing, coordinate math, crop/resize/rotate math, frame-order
   edit operations, the GIF disposal compositor (all 4 disposal types +
   transparency), target-size search config ordering (including two
@@ -498,7 +498,9 @@ status" below for exactly what was checked.
   `fixtures/loading-icon.gif`, 24 frames) — including a real encode-then-
   decode assertion that an out-of-range custom loop count is clamped
   rather than silently wrapping to "loop forever" (see "Bugs found and
-  fixed" #14 below), the Before/After zoom/pan viewport geometry
+  fixed" #14 below), and a direct `encodeGif` call at 70000×4 asserting it
+  now rejects instead of silently encoding a corrupt file (see #15 below)
+  — the Before/After zoom/pan viewport geometry
   (`beforeAfterViewport.test.ts`, 10 tests — fit-scale math, pan clamping,
   and the "same normalized region maps correctly onto two differently-
   sized sources" linked-navigation guarantee), and video
@@ -812,6 +814,41 @@ status" below for exactly what was checked.
     Fixed by clamping `resolveRepeat`'s custom branch to `[0, 65535]` and
     adding `max={65535}` to the UI field to match. Same test now asserts
     `65535`.
+15. **A large, non-square Resize could silently download a genuinely
+    corrupt GIF file — no error, no warning, a plausible file size**: the
+    GIF logical screen descriptor and image descriptor both store
+    width/height as 16-bit unsigned ints, and `gifenc` writes them via raw
+    byte-masking with no overflow check — the same class of bug as #14,
+    but far more severe, because it corrupts the *visual content* rather
+    than a playback setting. `ResizePanel.tsx`'s Width/Height fields had
+    `min={1}` but no upper bound, and neither `computePixelResize` nor
+    `computeOutputDimensions` clamped the result before it reached the
+    encoder. A square resize large enough to overflow (e.g. 70000×70000)
+    already failed safely with a real, visible `OffscreenCanvasRendering
+    Context2D getImageData` out-of-memory error — reproduced live to
+    confirm this before looking further — but total pixel count, not
+    either dimension alone, is what triggers that failure: a *wide-but-
+    short* resize (reproduced live at 70000×4) stays small enough in
+    total memory to succeed completely, and silently produces a
+    downloaded file whose real GIF header reads 4464×4 (70000 mod 65536)
+    while the actual pixel data was encoded assuming a 70000px-wide
+    stride — genuinely corrupt, unreadable-as-intended by any decoder,
+    with zero error surfaced anywhere. Verified both the break and the
+    fix live in a real browser (not just reasoned about): before the fix,
+    the raw downloaded file's header bytes read 4464×4; after the fix,
+    the UI's own `max={65535}` clamp keeps the field at a valid 65535 and
+    the downloaded file's header correctly reads 65535×4, matching. Fixed
+    at both layers — `ResizePanel.tsx` now has `max={65535}` on Width/
+    Height (consistent with Crop's existing source-bounded max), and,
+    as the real safety net (crop+resize+rotate could in principle combine
+    to exceed this even with Resize alone bounded), `encoder.ts`'s
+    `encodeGif` now throws a clear, specific error for any width/height
+    over 65535 instead of ever attempting to encode it. Covered by a new
+    unit test that calls `encodeGif` directly at 70000×4 (bypassing the
+    UI layer entirely) and asserts it rejects instead of returning bytes.
+    Re-ran `core-editing.spec.ts`, `optimize.spec.ts`, and
+    `frame-operations.spec.ts` (15/15 on Chromium) to confirm the new
+    guard doesn't affect any normal-sized encode path.
 
 ## Verification rounds
 
