@@ -180,6 +180,48 @@ test.describe('video export (MP4/WebM)', () => {
     expect(pageErrors).toEqual([])
   })
 
+  test('a custom background color is genuinely applied, not defaulted to black/white', async ({ page }) => {
+    test.slow()
+    const pageErrors: string[] = []
+    page.on('pageerror', (err) => pageErrors.push(err.message))
+
+    await uploadGif(page, LOADING_ICON_GIF) // 441x291 -> padded to 442x292
+    await openExportFormat(page, 'WEBM')
+    test.skip(!(await isFormatAvailable(page, 'webm')), 'WebM encoding is unavailable in this browser')
+
+    await page.locator('button:has-text("Custom")').click()
+    await page.locator('input[type=color]').fill('#00ff00') // pure green — unmistakable against black/white
+
+    const downloadPromise = page.waitForEvent('download')
+    await page.locator('button:has-text("Export WEBM")').click()
+    const download = await downloadPromise
+    const filePath = await download.path()
+
+    await loadVideoMetadata(page, filePath!, 'video/webm')
+    // Sample the even-padding column (x=441, the extra column added beyond the 441px-wide
+    // source) — pure background fill with nothing drawn over it, so it directly proves
+    // whether the chosen custom color reached the actual encoded output.
+    const [r, g, b] = await videoCenterPixelAt(page, 0.1).then(() =>
+      page.evaluate(() => {
+        const video = document.querySelector('video') as HTMLVideoElement
+        const canvas = document.createElement('canvas')
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        const ctx = canvas.getContext('2d')!
+        ctx.drawImage(video, 0, 0)
+        const d = ctx.getImageData(441, 5, 1, 1).data
+        return [d[0], d[1], d[2], d[3]]
+      }),
+    )
+    // Lossy VP9/chroma-subsampled color isn't pixel-exact, but green must clearly dominate —
+    // this could not happen if the background silently stayed at the black/white default.
+    expect(g).toBeGreaterThan(r)
+    expect(g).toBeGreaterThan(b)
+    expect(g).toBeGreaterThan(150)
+
+    expect(pageErrors).toEqual([])
+  })
+
   test('cancelling a video export stops cleanly, not as a red error toast, and export remains usable afterward', async ({ page }) => {
     test.slow()
     const pageErrors: string[] = []
