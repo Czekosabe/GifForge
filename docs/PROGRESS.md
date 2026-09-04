@@ -1082,3 +1082,60 @@ touched.
   exact hashes/messages.
 * No remote configured (`git remote -v` empty at both start and end of
   session) — commits remain local, consistent with every prior session.
+
+---
+
+## 2026-09-05 00:55 — Closed two real gaps in video export's own test coverage
+
+Continued auditing the just-shipped video export feature rather than
+treating the previous entry's verification as final, matching this
+project's established pattern for new features.
+
+### Verified (live, via throwaway probe scripts before committing anything)
+
+* **New Project mid-video-export**: confirmed the generic job-cancellation
+  fix from bug #11 (starting New Project cancels every `'running'` job
+  before terminating the worker) correctly covers the new `'export-video'`
+  job type too, without any new code — no orphaned/frozen toast, app
+  remains fully usable, re-upload succeeds immediately afterward.
+* **Custom background color**: every other video-export test used the
+  default black background, so the "Custom" color-picker path had never
+  actually been exercised end-to-end. Confirmed live: a real WebM exported
+  with a pure-green custom background shows green clearly dominant when
+  sampling the even-dimension padding column (pure background fill,
+  nothing drawn over it) in the real decoded video — not black or white,
+  proving the chosen color genuinely reaches the encoder rather than
+  silently defaulting.
+
+### Added
+
+* `e2e/video-export.spec.ts`: a new permanent test for the custom
+  background color case (the New Project case wasn't promoted to a
+  permanent test — it's already covered by the same generic mechanism
+  `resilience.spec.ts`'s existing orphaned-toast test guards, and this
+  session's probe already confirmed the new job type is covered by that
+  existing test's own logic without any code change needed).
+
+### Tests
+
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`, `npx vitest run` (96/96),
+  `npm run build`: all clean.
+* `npx playwright test --project=chromium`: **45/45** (44 prior + 1 new).
+* `npx playwright test --project=firefox`: **45/45**.
+* `npx playwright test --project=webkit`: **20 passed + 25 skipped + 0
+  failed** (new test skips there too, via the existing capability-aware
+  check — WebM encoding is unavailable in that build).
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: updated TEST STATUS counts (45 e2e
+  tests, updated Browser test results table) to the actual re-run
+  numbers; extended the WebM DONE bullet to mention the verified custom
+  background color coverage.
+
+### Git
+
+* One commit (`test: verify the custom background color is genuinely
+  applied to video export`), authored as the repository's configured
+  identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD`.

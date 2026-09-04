@@ -250,7 +250,11 @@ status" below for exactly what was checked.
   matched exactly), and a real project edit (image overlay) is visibly
   present when the exported video is decoded and sampled. Odd source
   dimensions are padded by at most 1px (not rescaled/distorted) with a
-  user-facing notice. Cancellable; shares the exact same
+  user-facing notice; a custom background color genuinely reaches the
+  encoded output (verified by sampling the padding column, pure
+  background with nothing drawn over it, in a real decoded video — green
+  clearly dominant, not the black/white defaults). Cancellable; shares the
+  exact same
   heavy-job-exclusivity guard as GIF export/optimize (verified: starting
   a video export while Optimize is running is rejected with the same
   clear message, and both remain usable afterward). WebKit: correctly
@@ -484,7 +488,7 @@ status" below for exactly what was checked.
   `exportVideo` method or the main thread's capability check —
   `pipeline.worker.js` itself grew by under 1KB. GIF-only sessions that
   never touch the MP4/WebM format tab pay none of this cost.
-- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 44
+- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 45
   persisted tests across 9 files, actually part of this repository (unlike
   prior sessions' ad hoc scratch scripts — see `docs/PROGRESS.md`'s
   2026-09-04 20:13 entry). Each real-browser-only regression case earlier
@@ -501,9 +505,9 @@ status" below for exactly what was checked.
 
   | Browser  | Passed | Skipped | Failed | Notes |
   |----------|-------:|--------:|-------:|-------|
-  | Chromium | 44/44  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
-  | Firefox  | 44/44  | 0       | 0      | Run manually this session; not in CI |
-  | WebKit   | 20/44  | 24      | 0      | Video-export tests are capability-aware, not blanket-skipped by browser name: they self-skip via a real runtime check of whether WebM encoding is actually available (it isn't, in this WebKit build), same as the rest of this table's OffscreenCanvas-dependent skips (see "Known Limitations") |
+  | Chromium | 45/45  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
+  | Firefox  | 45/45  | 0       | 0      | Run manually this session; not in CI |
+  | WebKit   | 20/45  | 25      | 0      | Video-export tests are capability-aware, not blanket-skipped by browser name: they self-skip via a real runtime check of whether WebM encoding is actually available (it isn't, in this WebKit build), same as the rest of this table's OffscreenCanvas-dependent skips (see "Known Limitations") |
 
   "TESTED" below means an assertion in this table or in `e2e/` actually ran
   and passed against that engine this session — not inferred or assumed.
