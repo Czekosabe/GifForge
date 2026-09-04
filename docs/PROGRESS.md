@@ -755,3 +755,67 @@ tests didn't actually exercise.
   counts and Reset to original`), authored as the repository's configured
   identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD`.
+
+---
+
+## 2026-09-04 22:23 — Real gap: the comparison decode had no memory safeguard
+
+Kept auditing the Before/After feature for the one remaining unverified
+angle: resource lifecycle under a large GIF, matching this project's
+established pattern of stress-testing rather than assuming correctness.
+
+### Fixed
+
+* **`decodeForCompare` had no memory cap at all**, unlike the rest of the
+  app's load path (`loadGif` refuses above 2GB, `getPreviewBitmaps`
+  downscales above 300MB). It always decoded at full resolution, twice per
+  optimize result (original + optimized), on top of whatever the live
+  project already held resident. Fixed by downscaling above the same
+  `MEMORY_WARN_BYTES` (300MB) threshold `getPreviewBitmaps` already uses,
+  via the same `OffscreenCanvas`-resize pattern.
+
+### Verified (measured, not assumed)
+
+* The fix only bounds resolution-driven memory growth, not
+  frame-count-driven growth — regenerated this project's own
+  600-frame/480×360/~415MB synthetic stress fixture (`scripts/
+  generate-stress-fixture.cjs`, not committed, generated outside the
+  project root per the established lesson from earlier this session) and
+  confirmed directly: since 480×360 stays under the downscale threshold's
+  800px cap, no downscaling triggers despite 600 frames driving estimated
+  memory to ~415MB per side. Rather than leave that as an unverified
+  caveat, measured the actual worst case: decoding both comparison sides
+  at full resolution against that fixture (~830MB combined) completed
+  cleanly in ~12s with zero page errors — a real, documented, but
+  currently non-manifesting limitation at the scale this app has actually
+  been tested against.
+* Normal-size comparisons are unaffected: the `scale === 1` code path is
+  byte-identical to before the fix, confirmed by re-running the existing
+  Before/After e2e tests with no changes in behavior.
+
+### Tests
+
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`, `npx vitest run` (64/64),
+  `npm run build`: all clean.
+* `npx playwright test --project=chromium`: 31/31 (no new tests — the
+  stress-fixture check was a one-time verification, not promoted to the
+  permanent suite, consistent with how this project's earlier large-file
+  stress testing was handled).
+* `npx playwright test --project=firefox`: 31/31.
+* `npx playwright test --project=webkit`: 18 passed + 13 skipped.
+
+### Documentation
+
+* `docs/ARCHITECTURE.md`: updated the "Visual Before/After comparison"
+  section — corrected the "no OffscreenCanvas dependency" claim (now
+  conditionally true only below the downscale threshold) and documented
+  the fix plus its measured frame-count caveat.
+* `docs/IMPLEMENTATION_STATUS.md`: added a Known Limitations entry for the
+  frame-count-vs-resolution distinction, with the actual measured numbers.
+
+### Git
+
+* One commit (`fix(worker): bound decodeForCompare's memory usage above
+  the existing warn threshold`), authored as the repository's configured
+  identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD`.
