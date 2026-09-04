@@ -80,6 +80,25 @@ describe('encodeGif round-trip', () => {
     expect(roundTripped.metadata.frameCount).toBe(source.metadata.frameCount)
   })
 
+  it('clamps an out-of-range custom loop count instead of silently wrapping it', async () => {
+    const source = decodeGif(loadFixture('loading-icon.gif'), { fileName: 'loading-icon.gif' })
+    // The GIF NETSCAPE loop-count field is 16-bit; 65536 wraps to 0 ("loop forever") if written
+    // raw and unclamped — the exact opposite of the finite count the user actually requested.
+    // The "Repeat count" field (ExportPanel.tsx) has no upper bound of its own, so this must be
+    // enforced at the encoder boundary.
+    const encoded = await encodeGif(source.frames, {
+      width: source.metadata.width,
+      height: source.metadata.height,
+      maxColors: 64,
+      dither: false,
+      ditherStrength: 0,
+      loopMode: 'custom',
+      customLoopCount: 65536,
+    })
+    const roundTripped = decodeGif(encoded.buffer as ArrayBuffer, { fileName: 'roundtrip.gif' })
+    expect(roundTripped.metadata.loopCount).toBe(65535)
+  })
+
   it('rejects encoding zero frames', async () => {
     await expect(
       encodeGif([], {

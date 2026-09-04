@@ -488,17 +488,20 @@ status" below for exactly what was checked.
 
 # TEST STATUS
 
-- **Unit tests**: 104 passing (`npx vitest run`), 11 files — frame-range
+- **Unit tests**: 105 passing (`npx vitest run`), 11 files — frame-range
   parsing, coordinate math, crop/resize/rotate math, frame-order
   edit operations, the GIF disposal compositor (all 4 disposal types +
   transparency), target-size search config ordering (including two
   regression tests for the cartesian-explosion bug described below),
-  two real-file decode/encode/round-trip integration tests using actual
+  real-file decode/encode/round-trip integration tests using actual
   downloaded GIF fixtures (`fixtures/rotating-earth.gif`, 44 frames;
-  `fixtures/loading-icon.gif`, 24 frames), the Before/After zoom/pan
-  viewport geometry (`beforeAfterViewport.test.ts`, 10 tests — fit-scale
-  math, pan clamping, and the "same normalized region maps correctly onto
-  two differently-sized sources" linked-navigation guarantee), and video
+  `fixtures/loading-icon.gif`, 24 frames) — including a real encode-then-
+  decode assertion that an out-of-range custom loop count is clamped
+  rather than silently wrapping to "loop forever" (see "Bugs found and
+  fixed" #14 below), the Before/After zoom/pan viewport geometry
+  (`beforeAfterViewport.test.ts`, 10 tests — fit-scale math, pan clamping,
+  and the "same normalized region maps correctly onto two differently-
+  sized sources" linked-navigation guarantee), and video
   export's pure logic (30 tests across `timestamps.test.ts`,
   `bitrate.test.ts`, `dimensions.test.ts` — variable-delay-to-timestamp
   conversion with no compounding rounding drift, bitrate scaling with
@@ -786,6 +789,29 @@ status" below for exactly what was checked.
     changes. Covered by 4 new unit tests in `dimensions.test.ts`. Re-ran
     the full `video-export.spec.ts` suite on Chromium and Firefox (9/9 on
     both) to confirm the added effect dependency caused no regression.
+14. **A custom GIF loop count above 65535 silently wrapped to "loop
+    forever"**: `encoder.ts`'s `resolveRepeat` returned the raw
+    `customLoopCount` unclamped, but the GIF NETSCAPE2.0 application
+    extension's loop-count field is a 16-bit unsigned int
+    (`gifenc`'s `writeUInt16` masks to the low 2 bytes with no overflow
+    check) — a value of 65536 wraps to 0, which every GIF-compliant
+    decoder interprets as "loop forever", the exact opposite of the finite
+    count requested. The "Repeat count" field (`ExportPanel.tsx`) has no
+    upper bound of its own (only `min={1}`), so this was reachable by
+    typing an extra digit. Found while investigating a different,
+    ultimately-false lead (whether `encoder.ts` had its own version of the
+    project's historical 10x-delay bug — it does not; `gifenc`'s `delay`
+    option is genuinely in milliseconds and is internally divided by 10
+    before being written, confirmed by reading `gifenc`'s own source, not
+    assumed) — the loop-count field turned out to have the real,
+    unrelated bug instead. Verified empirically, not just reasoned about:
+    a new test encodes with `customLoopCount: 65536`, decodes the actual
+    output's NETSCAPE extension via `decodeGif`'s existing `loopCount`
+    field, and — before the fix — genuinely got back `0`, proving the
+    wraparound really happens rather than being a theoretical concern.
+    Fixed by clamping `resolveRepeat`'s custom branch to `[0, 65535]` and
+    adding `max={65535}` to the UI field to match. Same test now asserts
+    `65535`.
 
 ## Verification rounds
 

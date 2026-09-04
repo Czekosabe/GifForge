@@ -262,6 +262,7 @@ export function ExportPanel() {
                 label="Repeat count"
                 value={settings.customLoopCount}
                 min={1}
+                max={65535}
                 onChange={() => {}}
                 onCommit={(v) => patch({ customLoopCount: v })}
               />

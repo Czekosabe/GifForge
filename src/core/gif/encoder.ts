@@ -32,7 +32,9 @@ export class EncodeCancelledError extends Error {
 function resolveRepeat(loopMode: LoopMode, customLoopCount: number): number {
   if (loopMode === 'none') return -1
   if (loopMode === 'forever') return 0
-  return Math.max(0, customLoopCount)
+  // The GIF NETSCAPE loop-count field is a 16-bit unsigned int; an unclamped value here would
+  // silently wrap (e.g. 65536 -> 0, meaning "loop forever" — the opposite of what was asked).
+  return Math.min(65535, Math.max(0, customLoopCount))
 }
 
 export async function encodeGif(frames: EncodeFrameInput[], options: EncodeOptions): Promise<Uint8Array> {

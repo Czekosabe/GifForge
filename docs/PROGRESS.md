@@ -1306,3 +1306,46 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
   size, not the source size`), authored as the repository's configured
   identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD`.
+
+## 2026-09-05 01:25 — Fixed a real bug: custom GIF loop count above 65535 silently became "loop forever"
+
+### Audit
+
+* While chasing a different, ultimately-false lead (whether GIF encoding
+  had its own version of the project's historical 10x-delay bug —
+  confirmed it does not, by reading `gifenc`'s actual source: its `delay`
+  option is genuinely milliseconds and gets divided by 10 internally
+  before being written, exactly matching its documented units), noticed
+  `encoder.ts`'s `resolveRepeat` returns `customLoopCount` unclamped. The
+  GIF NETSCAPE2.0 loop-count field is a 16-bit unsigned int; `gifenc`
+  writes it via a raw byte-mask with no overflow check, so a value of
+  65536 wraps to 0 — which every GIF-compliant decoder reads as "loop
+  forever," the opposite of the finite count actually requested. The
+  "Repeat count" field (`ExportPanel.tsx`) has no upper bound (only
+  `min={1}`), so this was reachable by typing one extra digit.
+
+### Fix
+
+* Verified the bug empirically before fixing anything: added a test that
+  encodes with `customLoopCount: 65536`, decodes the real output via the
+  existing `decodeGif`/`loopCount` machinery, and confirmed it genuinely
+  came back as `0` — not a theoretical concern.
+* Fixed by clamping `resolveRepeat`'s custom branch to `[0, 65535]` in
+  `encoder.ts`, and added `max={65535}` to the "Repeat count" NumberField
+  in `ExportPanel.tsx` to match. Same test now asserts `65535`.
+* Full verification: `npm run typecheck` clean, `npm run lint` clean,
+  `npm test` 105/105 passing (up from 104). No existing e2e test touches
+  the loop-count field, so no e2e re-run was needed for this one.
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: added bug #14 to "Bugs found and
+  fixed" (including the false lead investigated first, recorded honestly
+  since it's what led to finding the real bug), updated the unit test
+  count in TEST STATUS.
+
+### Git
+
+* One commit (`fix: clamp custom GIF loop count to the encoder's 16-bit
+  field range`), authored as the repository's configured identity, no AI
+  attribution — verified via `git show -s --format="%an <%ae>" HEAD`.
