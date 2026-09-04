@@ -109,7 +109,7 @@ function scaleFrame(rgba: Uint8ClampedArray, srcW: number, srcH: number, dstW: n
   return dstCtx.getImageData(0, 0, dstW, dstH).data as unknown as Uint8ClampedArray
 }
 
-export function runTargetSizeSearch(input: TargetSizeSearchInput): TargetSizeSearchResult {
+export async function runTargetSizeSearch(input: TargetSizeSearchInput): Promise<TargetSizeSearchResult> {
   const maxAttempts = input.maxAttempts ?? 24
   const candidates = buildCandidateConfigs(input).slice(0, maxAttempts)
 
@@ -137,7 +137,7 @@ export function runTargetSizeSearch(input: TargetSizeSearchInput): TargetSizeSea
             rgba: scaleFrame(f.rgba, input.width, input.height, targetWidth, targetHeight),
           }))
 
-    const bytes = encodeGif(scaledFrames, {
+    const bytes = await encodeGif(scaledFrames, {
       width: targetWidth,
       height: targetHeight,
       maxColors: config.maxColors,
@@ -167,7 +167,7 @@ export function runTargetSizeSearch(input: TargetSizeSearchInput): TargetSizeSea
 
   input.onProgress?.(1, 'Could not reach target size.')
   const fallback = best ?? {
-    bytes: encodeGif(input.frames, {
+    bytes: await encodeGif(input.frames, {
       width: input.width,
       height: input.height,
       maxColors: 256,

@@ -13,10 +13,10 @@ function loadFixture(name: string): ArrayBuffer {
 }
 
 describe('encodeGif round-trip', () => {
-  it('re-encodes a decoded real GIF into a valid, non-empty, decodable GIF', () => {
+  it('re-encodes a decoded real GIF into a valid, non-empty, decodable GIF', async () => {
     const source = decodeGif(loadFixture('loading-icon.gif'), { fileName: 'loading-icon.gif' })
 
-    const bytes = encodeGif(source.frames, {
+    const bytes = await encodeGif(source.frames, {
       width: source.metadata.width,
       height: source.metadata.height,
       maxColors: 256,
@@ -37,10 +37,10 @@ describe('encodeGif round-trip', () => {
     expect(roundTripped.metadata.durationMs).toBeGreaterThan(0)
   })
 
-  it('produces a smaller file with a reduced color count', () => {
+  it('produces a smaller file with a reduced color count', async () => {
     const source = decodeGif(loadFixture('loading-icon.gif'), { fileName: 'loading-icon.gif' })
 
-    const highQuality = encodeGif(source.frames, {
+    const highQuality = await encodeGif(source.frames, {
       width: source.metadata.width,
       height: source.metadata.height,
       maxColors: 256,
@@ -50,7 +50,7 @@ describe('encodeGif round-trip', () => {
       customLoopCount: 0,
     })
 
-    const lowQuality = encodeGif(source.frames, {
+    const lowQuality = await encodeGif(source.frames, {
       width: source.metadata.width,
       height: source.metadata.height,
       maxColors: 16,
@@ -63,9 +63,9 @@ describe('encodeGif round-trip', () => {
     expect(lowQuality.length).toBeLessThan(highQuality.length)
   })
 
-  it('honors loop mode "none" vs "forever" in the encoded NETSCAPE extension', () => {
+  it('honors loop mode "none" vs "forever" in the encoded NETSCAPE extension', async () => {
     const source = decodeGif(loadFixture('loading-icon.gif'), { fileName: 'loading-icon.gif' })
-    const noLoop = encodeGif(source.frames, {
+    const noLoop = await encodeGif(source.frames, {
       width: source.metadata.width,
       height: source.metadata.height,
       maxColors: 64,
@@ -80,8 +80,8 @@ describe('encodeGif round-trip', () => {
     expect(roundTripped.metadata.frameCount).toBe(source.metadata.frameCount)
   })
 
-  it('rejects encoding zero frames', () => {
-    expect(() =>
+  it('rejects encoding zero frames', async () => {
+    await expect(
       encodeGif([], {
         width: 10,
         height: 10,
@@ -91,6 +91,6 @@ describe('encodeGif round-trip', () => {
         loopMode: 'forever',
         customLoopCount: 0,
       }),
-    ).toThrow()
+    ).rejects.toThrow()
   })
 })

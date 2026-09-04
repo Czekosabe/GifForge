@@ -1,5 +1,6 @@
 import { GIFEncoder } from 'gifenc'
 import { buildGlobalPalette, createNearestColorCache, ditherFrameToPalette, findTransparentIndex } from './quantize'
+import { yieldToEventLoop } from '../util/yieldToEventLoop'
 import type { LoopMode } from '../../types/project'
 
 export interface EncodeFrameInput {
@@ -34,7 +35,7 @@ function resolveRepeat(loopMode: LoopMode, customLoopCount: number): number {
   return Math.max(0, customLoopCount)
 }
 
-export function encodeGif(frames: EncodeFrameInput[], options: EncodeOptions): Uint8Array {
+export async function encodeGif(frames: EncodeFrameInput[], options: EncodeOptions): Promise<Uint8Array> {
   if (frames.length === 0) {
     throw new Error('Cannot encode a GIF with zero frames.')
   }
@@ -54,6 +55,10 @@ export function encodeGif(frames: EncodeFrameInput[], options: EncodeOptions): U
   const colorCache = createNearestColorCache()
 
   for (let i = 0; i < frames.length; i++) {
+    // Real per-frame work (quantize+dither) is synchronous CPU work; yielding every few
+    // frames gives a queued Comlink cancel() message a chance to actually be delivered
+    // and observed here, instead of running the whole encode to completion regardless.
+    if (i > 0 && i % 4 === 0) await yieldToEventLoop()
     if (options.signal?.aborted) throw new EncodeCancelledError()
 
     const frame = frames[i]!

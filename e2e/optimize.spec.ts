@@ -62,4 +62,44 @@ test.describe('optimization', () => {
     const usedResolutionReduction = result.width < 400 || result.height < 400
     expect(usedFrameReduction || usedResolutionReduction).toBe(true)
   })
+
+  test('cancelling an in-progress optimization stops cleanly, not as a red error toast, and leaves the app usable', async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName === 'webkit', OFFSCREEN_CANVAS_UNSUPPORTED_REASON)
+    const pageErrors: string[] = []
+    page.on('pageerror', (err) => pageErrors.push(err.message))
+
+    await uploadGif(page, ROTATING_EARTH_GIF)
+    await page.locator('button[title="Optimize"]').click()
+    await page.locator('button:has-text("Target Size")').click()
+    await page.getByRole('button', { name: '256KB', exact: true }).click()
+    await page.locator('text=Allow FPS reduction').click()
+    await page.locator('text=Allow frame dropping').click()
+    await page.locator('text=Allow resolution reduction').click()
+    await page.locator('text=Keep dimensions').click() // uncheck
+
+    await page.locator('button:has-text("Run optimization")').click()
+    await expect(page.locator('button:has-text("Cancel")')).toBeVisible({ timeout: 5_000 })
+    await page.waitForTimeout(300) // let the search genuinely start before cancelling
+    await page.locator('button:has-text("Cancel")').click()
+
+    // Cancelling is a user action, not an error: no red failed-job toast, no leftover
+    // "Encoding was cancelled." message shown as if something went wrong (regression —
+    // this used to happen because the aborted worker promise's rejection overwrote the
+    // job's 'cancelled' status back to 'failed' after cancelJob() had already set it).
+    await expect(page.locator('text=Encoding was cancelled.')).not.toBeVisible()
+    await expect(page.locator('.border-red-800')).not.toBeVisible()
+
+    // The Run button must come back — not stuck showing "Cancel" forever.
+    await expect(page.locator('button:has-text("Run optimization")')).toBeVisible({ timeout: 5_000 })
+
+    // The worker must still be usable afterward, not left in a broken/aborted state.
+    await page.locator('button:has-text("Aggressive")').click()
+    await page.locator('button:has-text("Run optimization")').click()
+    await expect(page.locator('text=Before / After')).toBeVisible({ timeout: 30_000 })
+
+    expect(pageErrors).toEqual([])
+  })
 })

@@ -54,7 +54,12 @@ export function OptimizePanel() {
       setResult(res)
       completeJob(id)
     } catch (err) {
-      failJob(id, err instanceof Error ? err.message : 'Optimization failed.')
+      // A user-initiated cancel already set this job to 'cancelled' (see cancel() below);
+      // the abort then makes the pending pipeline call reject too. Don't let that turn a
+      // clean cancellation into a red "failed" toast.
+      if (useJobStore.getState().jobs.find((j) => j.id === id)?.status !== 'cancelled') {
+        failJob(id, err instanceof Error ? err.message : 'Optimization failed.')
+      }
     } finally {
       setRunning(false)
       setJobId(null)

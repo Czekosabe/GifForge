@@ -6,6 +6,7 @@ import { renderFrame, computeOutputDimensions, canvasToImageData, type CanvasFac
 import { runTargetSizeSearch } from '../core/optimization/targetSizeSearch'
 import { applySpeedToDelay } from '../core/edit/frameOrder'
 import { isFrameVisible, parseFrameRange } from '../core/selection/frameRange'
+import { yieldToEventLoop } from '../core/util/yieldToEventLoop'
 import type { CompositedFrame, GifMetadata } from '../types/gif'
 import type { EditOperations, ExportSettings, Layer, OptimizationSettings } from '../types/project'
 
@@ -208,12 +209,15 @@ class GifPipeline {
     return computeOutputDimensions(width, height, edits.crop, edits.resize, edits.rotate)
   }
 
-  private renderAllFrames(edits: EditOperations, layers: Layer[], onProgress?: ProgressCallback) {
+  private async renderAllFrames(edits: EditOperations, layers: Layer[], onProgress?: ProgressCallback) {
     const editedFrames = this.buildEditedFrameList(edits)
     const dims = computeOutputDimensions(this.metadata!.width, this.metadata!.height, edits.crop, edits.resize, edits.rotate)
     const rendered: { rgba: Uint8ClampedArray; delayMs: number }[] = []
 
     for (let i = 0; i < editedFrames.length; i++) {
+      // See yieldToEventLoop's doc comment: without this, a cancel() called mid-render
+      // never gets delivered until the whole synchronous loop finishes on its own.
+      if (i > 0 && i % 4 === 0) await yieldToEventLoop()
       if (this.abortController?.signal.aborted) throw new EncodeCancelledError()
       const frame = editedFrames[i]!
       const imageData = this.renderFullFrame(frame.rgba, edits, layers, i + 1, editedFrames.length)
@@ -240,7 +244,7 @@ class GifPipeline {
         : edits
 
     onProgress?.(0, 'Rendering frames…')
-    const { rendered, width, height } = this.renderAllFrames(frameRangeFrames, layers, (f, m) => onProgress?.((f ?? 0) * 0.7, m))
+    const { rendered, width, height } = await this.renderAllFrames(frameRangeFrames, layers, (f, m) => onProgress?.((f ?? 0) * 0.7, m))
 
     const scale = settings.scalePercent / 100
     const scaledWidth = Math.max(1, Math.round(width * scale))
@@ -251,7 +255,7 @@ class GifPipeline {
         : rendered.map((f) => ({ delayMs: f.delayMs, rgba: this.scaleRgba(f.rgba, width, height, scaledWidth, scaledHeight) }))
 
     onProgress?.(0.75, 'Encoding GIF…')
-    const bytes = encodeGif(scaledFrames, {
+    const bytes = await encodeGif(scaledFrames, {
       width: scaledWidth,
       height: scaledHeight,
       maxColors: settings.maxColors,
@@ -279,10 +283,10 @@ class GifPipeline {
     const signal = this.abortController.signal
 
     onProgress?.(0, 'Rendering frames…')
-    const { rendered, width, height } = this.renderAllFrames(edits, layers, (f, m) => onProgress?.((f ?? 0) * 0.3, m))
+    const { rendered, width, height } = await this.renderAllFrames(edits, layers, (f, m) => onProgress?.((f ?? 0) * 0.3, m))
 
     if (settings.preset === 'target-size' && settings.targetSizeBytes) {
-      const result = runTargetSizeSearch({
+      const result = await runTargetSizeSearch({
         frames: rendered,
         width,
         height,
@@ -317,7 +321,7 @@ class GifPipeline {
         : rendered.map((f) => ({ delayMs: f.delayMs, rgba: this.scaleRgba(f.rgba, width, height, scaledWidth, scaledHeight) }))
 
     onProgress?.(0.5, 'Encoding…')
-    const bytes = encodeGif(scaledFrames, {
+    const bytes = await encodeGif(scaledFrames, {
       width: scaledWidth,
       height: scaledHeight,
       maxColors: presetSettings.maxColors,

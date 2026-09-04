@@ -31,6 +31,7 @@ export function ExportPanel() {
 
   const [exporting, setExporting] = useState(false)
   const [staticFormat, setStaticFormat] = useState<'png' | 'jpeg'>('png')
+  const [jobId, setJobId] = useState<string | null>(null)
 
   if (!project) return null
   const settings = project.exportSettings
@@ -43,6 +44,7 @@ export function ExportPanel() {
     if (!project) return
     setExporting(true)
     const id = startJob('export', 'Preparing export…', true)
+    setJobId(id)
     try {
       const pipeline = getPipeline()
       const bytes = await pipeline.exportGif(
@@ -54,14 +56,21 @@ export function ExportPanel() {
       downloadBytes(bytes, `${project.metadata.name}.gif`, 'image/gif')
       completeJob(id)
     } catch (err) {
-      failJob(id, err instanceof Error ? err.message : 'Export failed.')
+      // A user-initiated cancel already set this job to 'cancelled' (see cancelExport()
+      // below); the abort then makes this pending call reject too. Don't let that turn a
+      // clean cancellation into a red "failed" toast.
+      if (useJobStore.getState().jobs.find((j) => j.id === id)?.status !== 'cancelled') {
+        failJob(id, err instanceof Error ? err.message : 'Export failed.')
+      }
     } finally {
       setExporting(false)
+      setJobId(null)
     }
   }
 
   function cancelExport() {
     getPipeline().cancel()
+    if (jobId) useJobStore.getState().cancelJob(jobId)
   }
 
   async function exportStaticFrame() {
