@@ -292,6 +292,23 @@ status" below for exactly what was checked.
   a hypothetical edits-held-constant baseline would give. Worth revisiting
   only if this specific framing turns out to confuse real users in
   practice.
+- **Before/After's comparison decode bounds memory by resolution, not
+  frame count**: `decodeForCompare` downscales above the same 300MB
+  decoded-RGBA threshold `getPreviewBitmaps` uses, same as the main
+  preview — but only by pixel dimensions, not by subsampling frames, so a
+  GIF with a very high frame count at modest resolution isn't bounded by
+  this cap at all (e.g. 600 frames at 480×360 stays under the 800px
+  dimension threshold, so no downscaling triggers, despite the frame count
+  driving estimated memory well past 300MB). Measured directly rather than
+  left as a theoretical concern: the same 600-frame/480×360/~415MB
+  synthetic fixture used for this project's main-app stress testing,
+  decoded on *both* comparison sides at full resolution (~830MB combined
+  worst case), completed cleanly in ~12s with zero errors — a real but
+  currently non-manifesting limitation for GIFs at the scale this app has
+  actually been tested against, not an open crash risk. Revisit with
+  frame-subsampling (bounded, honest about a reduced-fidelity comparison,
+  not just for the sake of it) only if a real GIF larger than this
+  session's stress fixture actually causes a problem.
 
 # TECHNICAL DECISIONS
 

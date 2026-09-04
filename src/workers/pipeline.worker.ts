@@ -32,6 +32,7 @@ function assertOffscreenCanvasSupport(): void {
 
 const MEMORY_HARD_CAP_BYTES = 2 * 1024 * 1024 * 1024 // 2GB decoded RGBA — refuse above this
 const MEMORY_WARN_BYTES = 300 * 1024 * 1024 // 300MB decoded RGBA — suggest Performance Mode
+const COMPARE_MAX_DIMENSION_WHEN_LARGE = 800 // downscale comparison bitmaps above MEMORY_WARN_BYTES
 
 export interface LoadGifResult {
   metadata: GifMetadata
@@ -129,8 +130,13 @@ class GifPipeline {
    * project) so decoding a comparison side never disturbs the live editing session. Used
    * for both the original upload's bytes and the real optimized output's bytes, so the
    * viewer always shows genuine decoded pixels, never a synthetic/filtered approximation.
-   * No OffscreenCanvas dependency (createImageBitmap from ImageData works without it), so
-   * this works even in engines that can't run export/optimize itself.
+   *
+   * Unlike `loadGif`, there's no hard memory-cap refusal here — a comparison is
+   * supplementary, optional UI for a GIF that already loaded successfully, not the
+   * primary edit path. But it's called twice (original + optimized) at full resolution by
+   * default, on top of whatever the live project already holds resident, so a
+   * large-but-under-the-load-cap GIF is downscaled above `MEMORY_WARN_BYTES` — the same
+   * threshold and reasoning `getPreviewBitmaps` already uses for the main preview.
    */
   async decodeForCompare(buffer: ArrayBuffer): Promise<CompareDecodeResult> {
     let result
@@ -140,11 +146,37 @@ class GifPipeline {
       if (err instanceof GifDecodeError) throw new Error(err.message)
       throw err
     }
-    const { width, height } = result.metadata
-    const bitmaps = await Promise.all(result.frames.map((f) => createImageBitmap(new ImageData(f.rgba, width, height))))
+    const { width, height, frameCount } = result.metadata
+    const estimatedMemoryBytes = width * height * 4 * frameCount
+    // Reaching this method at all means optimize() already succeeded, which itself
+    // requires OffscreenCanvas — but guard anyway (OFFSCREEN_CANVAS_SUPPORTED) rather than
+    // assume, so this method stays correct/callable in isolation.
+    const scale =
+      OFFSCREEN_CANVAS_SUPPORTED && estimatedMemoryBytes > MEMORY_WARN_BYTES
+        ? Math.min(1, COMPARE_MAX_DIMENSION_WHEN_LARGE / Math.max(width, height))
+        : 1
+    const targetW = Math.max(1, Math.round(width * scale))
+    const targetH = Math.max(1, Math.round(height * scale))
+
+    const bitmaps: ImageBitmap[] = []
+    for (const frame of result.frames) {
+      if (scale === 1) {
+        bitmaps.push(await createImageBitmap(new ImageData(frame.rgba, width, height)))
+      } else {
+        const src = new OffscreenCanvas(width, height)
+        src.getContext('2d')!.putImageData(new ImageData(frame.rgba, width, height), 0, 0)
+        const dst = new OffscreenCanvas(targetW, targetH)
+        const dstCtx = dst.getContext('2d')!
+        dstCtx.imageSmoothingEnabled = true
+        dstCtx.imageSmoothingQuality = 'medium'
+        dstCtx.drawImage(src, 0, 0, targetW, targetH)
+        bitmaps.push(dst.transferToImageBitmap())
+      }
+    }
+
     return {
-      width,
-      height,
+      width: targetW,
+      height: targetH,
       frameCount: result.metadata.frameCount,
       durationMs: result.metadata.durationMs,
       fileSizeBytes: result.metadata.fileSizeBytes,

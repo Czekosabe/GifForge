@@ -211,15 +211,29 @@ Two different rendering paths exist on purpose:
 A third rendering path, added alongside the two above: `decodeForCompare`
 (`pipeline.worker.ts`) decodes a standalone GIF byte buffer — independent of
 `this.sourceFrames`/`this.metadata`, so it never disturbs the currently-open
-project — into full-resolution `ImageBitmap`s via `createImageBitmap` (no
-`OffscreenCanvas` dependency, unlike the render path above). It's called
+project — into `ImageBitmap`s via `createImageBitmap`, at full resolution by
+default (no `OffscreenCanvas` dependency for this base case). It's called
 twice per optimization result: once on the real uploaded source bytes
 (`Blob.arrayBuffer()`), once on the real optimized output bytes (a sliced
 *copy* of `result.bytes` — Comlink would otherwise transfer/detach the same
 buffer the "Download optimized GIF" button needs). Both sides are therefore
 genuinely decoded pixels from real GIF data, not a CSS filter or estimate,
 so quantization/dithering/palette/resolution/frame-reduction artifacts
-actually show up.
+actually show up. Above `MEMORY_WARN_BYTES` (the same 300MB decoded-RGBA
+threshold `getPreviewBitmaps` uses) it downscales via `OffscreenCanvas`
+instead — reaching this method at all means `optimize()` already succeeded,
+which itself requires `OffscreenCanvas`, so it's genuinely available here;
+the method still checks `OFFSCREEN_CANVAS_SUPPORTED` rather than assume it,
+so it stays correct if called in isolation. This bounds resolution-driven
+memory growth, but not frame-count-driven growth — a GIF with a very high
+frame count at modest resolution isn't currently subsampled for this
+comparison, only downscaled by pixel dimensions; measured directly against
+the same 600-frame/480×360/~415MB synthetic fixture used for this project's
+main-app stress testing (decoding *both* comparison sides at full
+resolution — an ~830MB combined worst case), this completed cleanly in
+~12s with zero errors, so it's a real but currently non-manifesting
+limitation, not an open crash risk (see Known Limitations in
+`docs/IMPLEMENTATION_STATUS.md`).
 
 `useOptimizeComparison` (`src/tools/`) owns the decode-and-cleanup lifecycle,
 keyed on the `optimize()` result and `sourceBlob` object identity — both are
