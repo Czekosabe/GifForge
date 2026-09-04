@@ -92,8 +92,22 @@ status" below for exactly what was checked.
   found and fixed"), it now genuinely reaches the target (167.6KB) by
   actually exercising frame-rate reduction (44→22 frames, confirmed by
   re-decoding the downloaded file), not just color/dither changes.
-- **Before/After** — original vs. optimized size, % saved, actual result
-  message, download button for the optimized bytes.
+- **Before/After** — real visual comparison (`BeforeAfterCompare.tsx`), not
+  just numbers: both sides are actual decoded frames (the real uploaded
+  source bytes vs. the real optimized GIF bytes the download button sends —
+  never a CSS filter or guessed effect), draggable split view with
+  keyboard-accessible divider (arrow keys/Home/End), an Animated mode
+  (independently-clocked per side so differing frame counts/rates from
+  frame-rate reduction stay honestly in sync rather than faking a 1:1 frame
+  correspondence) and a Frame mode (reuses the editor's current timeline
+  frame, proportionally mapped if frame counts differ), plus size/%
+  saved/dimensions/frame count/duration for both sides. The result
+  invalidates itself (hides, releases its decoded bitmaps) if the project
+  changes after it was produced, so a stale result can't keep looking
+  current. Verified live, including a pixel-exact check: the comparison
+  canvas's decoded pixel data matches the real downloaded file's decoded
+  pixel data exactly, confirming the "after" view is the actual optimizer
+  output, not an approximation.
 - **Export** — real `gifenc`-based encoding with loop mode (forever / none /
   custom count), frame-range subset, quality/color/dither/scale controls,
   7 presets. Verified live: downloaded file re-decodes with `gifuct-js`,
@@ -114,9 +128,27 @@ status" below for exactly what was checked.
   re-populated (decode re-run against the saved source blob).
 - **Job system** — typed job list (`jobStore`) with progress/message/
   cancel, rendered as toasts (`JobStatusBar.tsx`); load/optimize/export all
-  report real (not synthetic) progress fractions from the worker.
-- **Cancellation** — `AbortController`-based, wired for optimize and export
-  (checked between frames/attempts, throws `EncodeCancelledError`).
+  report real (not synthetic) progress fractions from the worker. Starting a
+  New Project while a job is still `'running'` cancels it in the store
+  before terminating the worker, so its toast can't get orphaned mid-flight
+  (see bug #11) — see `docs/ARCHITECTURE.md`'s "Job lifecycle" section for
+  the full ordering.
+- **Cancellation** — `AbortController`-based, wired for optimize and export.
+  The worker's render/encode loops cooperatively yield to the event loop
+  every few frames/attempts (`yieldToEventLoop`) specifically so a queued
+  Comlink cancel message actually gets a chance to be delivered and observed
+  mid-operation — see bug #9; without this, a synchronous worker call can't
+  receive any incoming message, including its own cancellation, until it
+  finishes on its own. Only one export/optimize can be in flight at a time
+  per project — see "Heavy-job exclusivity" below and bug #10.
+- **Heavy-job exclusivity** — `exportGif`/`optimize` share one worker
+  instance and one `AbortController`; starting a second heavy operation
+  while one is already running throws a clear "Another export or
+  optimization is already running." error instead of silently racing on
+  that shared controller (which previously meant Cancel could abort the
+  wrong job). The controller is always reset in a `finally` block so the
+  guard reliably releases once an operation ends, however it ends — see
+  bug #10.
 - **Memory-size estimation + Performance Mode** — `width×height×4×frameCount`
   computed before generating previews; above a threshold, Performance Mode is
   auto-suggested and preview bitmaps are generated at a smaller max
@@ -170,6 +202,8 @@ status" below for exactly what was checked.
 - **Canvas toolbar shows real output dimensions**, not just the original
   source size — e.g. `221 × 146 (from 441 × 291)` after a 50% resize.
   Verified live.
+- **Visual Before/After comparison for Optimize** — see the "Before/After"
+  bullet above. Was the top item in NEXT PRIORITIES; done as of this entry.
 
 # IN PROGRESS / PARTIAL
 
@@ -191,9 +225,6 @@ status" below for exactly what was checked.
 - APNG / WebP animation export, SRT subtitles, chroma key, stickers, batch
   processing/export, filters/effects, cloud integration — all explicitly
   deferred per spec's "don't implement now" list.
-- A dedicated "compare original vs. cropped/edited" split-view — the
-  Optimize panel's Before/After is numeric + a download link, not a visual
-  side-by-side canvas.
 
 # KNOWN LIMITATIONS
 
@@ -249,6 +280,18 @@ status" below for exactly what was checked.
   thread, no OffscreenCanvas needed) are unaffected and fully verified
   working in this WebKit build. See "Browser test results" below for exact
   numbers.
+- **Before/After's "Original" side is the raw uploaded file, not a
+  full-quality re-encode of the current edits**: a deliberate choice, for
+  consistency with the numeric size comparison's pre-existing semantics
+  (`project.metadata.sourceFileSizeBytes`, unchanged by this session) and
+  to avoid the cost of an extra full-quality encode on every optimize run.
+  If the user crops/resizes/rotates/adds layers/deletes frames *before*
+  running Optimize, the comparison legitimately shows those edits too, not
+  only quantization/dithering/palette/resolution effects in isolation —
+  still real, honest data (never synthetic), just a coarser comparison than
+  a hypothetical edits-held-constant baseline would give. Worth revisiting
+  only if this specific framing turns out to confuse real users in
+  practice.
 
 # TECHNICAL DECISIONS
 
@@ -300,23 +343,25 @@ status" below for exactly what was checked.
 - **Typecheck**: `npx tsc -b` — clean, zero errors.
 - **Lint**: `npx eslint . --ext ts,tsx` — clean, zero errors/warnings.
 - **Production build**: `npm run build` — succeeds.
-- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 25
-  persisted tests across 5 files, actually part of this repository (unlike
+- **Browser regression tests (`e2e/`, Playwright, `npm run test:e2e`)**: 30
+  persisted tests across 6 files, actually part of this repository (unlike
   prior sessions' ad hoc scratch scripts — see `docs/PROGRESS.md`'s
   2026-09-04 20:13 entry). Each real-browser-only regression case earlier
   sessions found manually (layer z-order, layer reorder direction, target-
   size search reduction ordering, frame-count sync after delete, error-
-  boundary recovery, etc.) now has a permanent test guarding it. CI runs
-  the chromium project on every push/PR; the full cross-browser run
-  (`npm run test:e2e`, all three engines) is run periodically/manually.
+  boundary recovery, cancel-doesn't-cancel, overlapping-job races, orphaned
+  job toasts, the visual comparison's real-data guarantee, etc.) now has a
+  permanent test guarding it. CI runs the chromium project on every
+  push/PR; the full cross-browser run (`npm run test:e2e`, all three
+  engines) is run periodically/manually.
 
   ### Browser test results (last run 2026-09-04, this repo's actual `e2e/` suite)
 
   | Browser  | Passed | Skipped | Failed | Notes |
   |----------|-------:|--------:|-------:|-------|
-  | Chromium | 25/25  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
-  | Firefox  | 25/25  | 0       | 0      | Run manually this session; not in CI |
-  | WebKit   | 17/25  | 8       | 0      | 8 tests skip with an explicit reason: export/optimize/static-frame-export need OffscreenCanvas, unavailable in this WebKit build (see "Known Limitations") |
+  | Chromium | 30/30  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
+  | Firefox  | 30/30  | 0       | 0      | Run manually this session; not in CI |
+  | WebKit   | 18/30  | 12      | 0      | 12 tests skip with an explicit reason: export/optimize/static-frame-export/before-after-compare need OffscreenCanvas, unavailable in this WebKit build (see "Known Limitations") |
 
   "TESTED" below means an assertion in this table or in `e2e/` actually ran
   and passed against that engine this session — not inferred or assumed.
@@ -634,7 +679,7 @@ they start costing more than they saved:
 
 Ranked by expected value given the current state — highest first:
 
-1. **Get WebKit's 8 skipped tests passing**, if real Safari/WebKit support
+1. **Get WebKit's 12 skipped tests passing**, if real Safari/WebKit support
    turns out to matter for the target audience. Requires either confirming
    real Safari *does* support OffscreenCanvas (in which case the gap is
    specific to Playwright's bundled WebKit test build, not a real product
@@ -643,12 +688,19 @@ Ranked by expected value given the current state — highest first:
    fallback render path for the export/optimize pipeline specifically —
    a real architectural addition, not a quick fix, so worth confirming the
    premise first.
-2. **A visual before/after split view for Optimize** (currently numeric +
-   download only) — the highest-value remaining UX gap from the original
-   feature list that hasn't been implemented.
+2. **A pixel-level zoom/magnifier for the Before/After viewer's Frame
+   mode** — the viewer already renders at full native resolution (no
+   worker-side downscale) specifically so dithering/quantization texture
+   isn't blurred away, but there's currently no in-app way to zoom in on it
+   beyond the browser's own page zoom. A natural, contained follow-up to
+   what shipped this session, not a new subsystem.
 3. **Sub-rectangle frame diffing on export**, *only* if a real GIF's output
    size becomes a concrete complaint — correctness must not regress, so
    this needs its own disposal-correctness test coverage before shipping.
-4. Everything explicitly deferred per the original spec (MP4/WebM, ZIP
+4. **A one-time "autosave isn't working" notice** if overlay-asset/autosave
+   persistence fails (currently a caught, logged, best-effort failure with
+   no user-facing signal — see Technical Debt) — worth it if silent storage
+   failures turn out to actually confuse users in practice.
+5. Everything explicitly deferred per the original spec (MP4/WebM, ZIP
    export, APNG/WebP, subtitles, batch processing, filters) remains
    correctly out of scope until requested.

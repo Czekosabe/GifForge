@@ -109,6 +109,73 @@ unavailable. Export, optimize, and static-frame export have no such
 fallback — they hard-fail with the clear message, since silently degrading
 export correctness/quality would be worse than an honest error.
 
+## Job lifecycle: cooperative cancellation and heavy-job exclusivity
+
+**Why a worker can't just "receive" a cancel message mid-operation.** A Web
+Worker is single-threaded: it can only process an incoming `postMessage` —
+including the Comlink RPC call that `cancel()` sends to trigger
+`AbortController.abort()` — in between synchronous stretches of its own JS.
+A render/encode loop that runs start-to-finish with no `await` inside it
+therefore can't be interrupted by anything, including its own cancellation;
+the abort message just sits queued until the loop finishes on its own. This
+was a real, previously-shipped bug (Cancel visibly changed the UI but the
+operation kept running to completion regardless) before being fixed.
+
+**The fix: bounded cooperative yielding.** `encodeGif` (`core/gif/
+encoder.ts`), `runTargetSizeSearch` (`core/optimization/targetSizeSearch.ts`),
+and `renderAllFrames` (`pipeline.worker.ts`) are `async` and `await
+yieldToEventLoop()` (`core/util/yieldToEventLoop.ts` — a `setTimeout(resolve,
+0)` wrapper) every few frames/attempts, immediately followed by an abort
+check. This gives a queued cancel message a real chance to be delivered and
+observed mid-operation, at the cost of a small, bounded latency (a handful
+of frames' worth of work) before cancellation actually takes effect — this
+tradeoff is intentional and should stay bounded, not removed: yielding on
+every single frame would add needless overhead on large GIFs, and yielding
+too rarely would make Cancel feel unresponsive again for the same reason it
+was broken before.
+
+**Heavy-job exclusivity.** `exportGif` and `optimize` are the only two
+operations that hold large frame buffers for the worker's single shared
+`AbortController`. Nothing in the UI stops a user from switching tools
+mid-job and starting a *second* heavy operation — so both methods check
+`this.abortController` at entry and throw a clear "Another export or
+optimization is already running. Cancel it or wait for it to finish first."
+error if one is already set, rather than silently letting the second call's
+`new AbortController()` overwrite the first job's controller (which
+previously meant Cancel could abort whichever job started most recently,
+not the one the user meant). Both methods run their body in a `try`/`finally`
+that always resets `this.abortController = null`, so the guard reliably
+releases once an operation ends — successfully, by cancellation, or by a
+real error — rather than getting permanently stuck rejecting every
+subsequent attempt.
+
+**New Project + an active job.** Starting a New Project needs to reconcile
+two independent things that both change on it: any job still `'running'`
+in the global `jobStore`, and the worker itself. The actual order in
+`startNewProject()` (`useLoadGif.ts`), verified against the code, not
+assumed:
+
+1. Pause playback.
+2. Cancel every currently-`'running'` job in `jobStore` — necessary because
+   terminating the worker (next step) kills any in-flight Comlink call
+   without ever resolving or rejecting it, so nothing would otherwise mark
+   that job done; its toast would stay on screen forever, frozen at its
+   last progress, with no way to dismiss it (`JobStatusBar` only offers a
+   dismiss button for `'failed'` jobs, not `'running'` ones).
+3. Terminate the worker outright (`terminatePipeline()`) — the simplest way
+   to guarantee its decoded frames and every registered overlay asset are
+   actually freed, rather than trying to incrementally undo its state.
+4. Clear `frameCacheStore` (closes every cached preview/thumbnail/asset
+   `ImageBitmap`).
+5. Close the project in `projectStore` (clears `project`/`sourceBlob`/
+   undo history).
+6. Reset `editorStore` (active tool, zoom/pan, selection, Performance Mode).
+7. Reset the playback frame index.
+8. Clear the autosave record (best-effort — a storage failure here doesn't
+   block the reset).
+
+The next upload lazily spins up a fresh worker via `getPipeline()`.
+
 ## Coordinate system
 
 All layer/crop coordinates in `Project` are in **image space**: pixels of the
@@ -138,6 +205,48 @@ Two different rendering paths exist on purpose:
   export source, so "looks right in the editor" and "is right in the export"
   can't silently diverge from mismatched code paths (though of course a
   genuine bug in the shared render logic would still show up in both).
+
+## Visual Before/After comparison (Optimize)
+
+A third rendering path, added alongside the two above: `decodeForCompare`
+(`pipeline.worker.ts`) decodes a standalone GIF byte buffer — independent of
+`this.sourceFrames`/`this.metadata`, so it never disturbs the currently-open
+project — into full-resolution `ImageBitmap`s via `createImageBitmap` (no
+`OffscreenCanvas` dependency, unlike the render path above). It's called
+twice per optimization result: once on the real uploaded source bytes
+(`Blob.arrayBuffer()`), once on the real optimized output bytes (a sliced
+*copy* of `result.bytes` — Comlink would otherwise transfer/detach the same
+buffer the "Download optimized GIF" button needs). Both sides are therefore
+genuinely decoded pixels from real GIF data, not a CSS filter or estimate,
+so quantization/dithering/palette/resolution/frame-reduction artifacts
+actually show up.
+
+`useOptimizeComparison` (`src/tools/`) owns the decode-and-cleanup lifecycle,
+keyed on the `optimize()` result and `sourceBlob` object identity — both are
+stable React state that only change when something real happens, so
+re-renders that don't (dragging the comparison split, switching Animated/
+Frame mode) never re-decode. Every `ImageBitmap` is `.close()`d — mirroring
+`frameCacheStore`'s existing pattern — when superseded by a new result, when
+the owning `OptimizePanel` unmounts, or when the result is invalidated (see
+below); an in-flight decode superseded by a newer one before it resolves
+closes what it just decoded instead of adopting it.
+
+`BeforeAfterCompare.tsx` is purely presentational: a draggable/keyboard-
+accessible split view, driven by two independent per-side playback clocks
+(sharing one `requestAnimationFrame` loop, each wrapping at its own frame
+count) so a result with a different original/optimized frame count — e.g.
+from target-size search's frame-rate reduction — stays honestly
+synchronized instead of faking a 1:1 frame correspondence that doesn't
+exist. A Frame mode reuses the editor's current timeline frame (proportionally
+mapped if frame counts differ) rather than inventing a separate frame
+picker.
+
+**Stale-result invalidation**: `OptimizePanel` keeps a ref to the `Project`
+a result was produced from; if the live `project` reference changes
+afterward (further edits, different optimize settings, Reset to original, a
+New Project — anything that produces a new `Project` object) the result is
+cleared, hiding the comparison rather than letting it keep looking current
+against a project it no longer describes.
 
 ## State stores (`src/state`)
 
@@ -211,7 +320,9 @@ the top bar's "New" button) is handled separately and more bluntly:
 terminate the worker outright (simplest way to guarantee its decoded frames
 and every registered asset are actually freed) rather than trying to
 incrementally undo its state, then clear every main-thread cache and reset
-UI/playback state. The next upload lazily spins up a fresh worker.
+UI/playback state — see "Job lifecycle" above for the exact ordering,
+including why any still-running job needs to be cancelled *before* the
+worker is terminated.
 
 A top-level `ErrorBoundary` (wrapping `<App />` in `main.tsx`) is the last
 line of defense: an uncaught render error shows a plain "GifForge needs to

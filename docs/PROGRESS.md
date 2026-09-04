@@ -566,3 +566,137 @@ a real bug and not a false alarm.
 * One commit (`fix(app): starting New Project mid-job no longer leaves a
   stuck job toast`), authored as the repository's configured identity, no
   AI attribution — verified via `git show -s --format="%an <%ae>" HEAD`.
+
+---
+
+## 2026-09-04 21:52 — Documentation reconciliation + visual Before/After comparison
+
+Two-part session: (1) audit every doc against the actual repository state
+rather than trusting prior sessions' reports, fixing what had drifted; (2)
+implement the top item from NEXT PRIORITIES — a real visual comparison for
+Optimize, not just numbers.
+
+### Fixed (documentation drift)
+
+* `README.md` claimed `npm run test:e2e` was "if installed" — Playwright
+  has been a real `devDependencies` entry and a persisted `e2e/` suite
+  since 2026-09-04 19:04; corrected.
+* `docs/IMPLEMENTATION_STATUS.md`'s "TEST STATUS" section (unit test count,
+  e2e file/test count, the Browser test results table) still showed the
+  25-test count from before the cancellation/concurrency/orphaned-toast
+  bug-fix session added 5 more tests (25→29) — corrected to the actual,
+  freshly re-run counts (see Tests below), including a second stale
+  reference to "8 skipped" in NEXT PRIORITIES.
+* The "Job system"/"Cancellation" DONE bullets and `docs/ARCHITECTURE.md`'s
+  "Lifecycle sync and cleanup" section predated the cooperative-yielding,
+  heavy-job-exclusivity, and orphaned-job-toast fixes from the prior
+  session and didn't mention any of them — added a new "Job lifecycle"
+  section to ARCHITECTURE.md documenting why a worker can't receive a
+  cancel message during an uninterrupted synchronous block, the bounded
+  cooperative-yield mechanism that fixes it, the heavy-job-exclusivity
+  guard and why the `AbortController` belongs to one operation at a time,
+  and the verified actual ordering `startNewProject()` uses (cancel running
+  jobs → terminate worker → clear caches → reset state → clear autosave).
+* Removed the completed TODO item ("a dedicated compare original vs.
+  edited split-view") and moved it to DONE now that it's real; re-ranked
+  NEXT PRIORITIES against the actual current state instead of carrying the
+  old list forward unchanged.
+
+### Added (visual Before/After comparison)
+
+* `pipeline.worker.ts`: `decodeForCompare(buffer)` — decodes a standalone
+  GIF byte buffer into `ImageBitmap`s, deliberately independent of the
+  currently-loaded project's state, so viewing a comparison never disturbs
+  the live editing session. No `OffscreenCanvas` dependency (uses
+  `createImageBitmap` directly).
+* `src/tools/useOptimizeComparison.ts`: decodes both the real original
+  upload and the real optimized output whenever a new result appears,
+  keyed on stable object identity so UI-only interactions never re-decode;
+  closes every `ImageBitmap` on replacement, unmount, or invalidation.
+* `src/tools/BeforeAfterCompare.tsx`: draggable, keyboard-accessible
+  (arrow keys/Home/End, `role="slider"`) split-view comparison. Animated
+  mode drives both sides from one shared clock but each side independently
+  wraps at its own frame count/rate — an honest sync, not a faked 1:1
+  frame correspondence, correct even when target-size search used
+  frame-rate reduction (different frame counts per side). Frame mode
+  reuses the editor's current timeline frame (proportionally mapped if
+  frame counts differ) instead of inventing a separate frame picker. Shows
+  size/%-saved/dimensions/frame-count/duration for both sides.
+* `OptimizePanel.tsx`: wired in; also added stale-result invalidation
+  (tracks the `Project` a result was produced from via a ref, clears the
+  result if the live project changes afterward) and replaced the old
+  numeric-only "Before/After" block with the visual one.
+* `e2e/before-after-compare.spec.ts`: one comprehensive test covering the
+  full checklist — no comparison before a result exists; real optimization
+  produces a real comparison; displayed sizes match the real downloaded
+  file; **a pixel-exact check that the comparison canvas's decoded pixel
+  data matches the real downloaded file's decoded pixel data**, proving
+  the "after" view is the actual optimizer output; dragging the split /
+  switching Frame↔Animated mode does not re-run optimization (sizes stay
+  identical, no new job toast); running a second optimization replaces the
+  comparison cleanly; New Project removes it; zero page errors throughout.
+
+### Fixed (caught during this implementation, before shipping)
+
+* The comparison split-divider handle was a plain white circle — nearly
+  invisible against light-colored source frames (caught via a manual
+  screenshot check, not just the automated assertions, which don't verify
+  contrast). Changed to a colored (accent) fill with a white border and a
+  dark outline shadow, visible against both light and dark image content.
+
+### Performance / Resource lifecycle
+
+* Comparison decoding only happens when a genuinely new optimize result
+  (or source) appears — verified via the e2e test's slider-drag and
+  mode-toggle assertions showing identical displayed sizes and no new
+  "Optimizing…" toast, i.e. no re-encode, no re-decode.
+* The optimized side's bytes are sliced (copied) before being sent to the
+  worker for comparison decoding, specifically because Comlink would
+  otherwise transfer (detach) the same `ArrayBuffer` the "Download
+  optimized GIF" button needs — verified the download still works after
+  viewing the comparison first.
+* All `ImageBitmap`s from both sides are `.close()`d on replacement,
+  `OptimizePanel` unmount, and stale-result invalidation — mirrors
+  `frameCacheStore`'s existing close-on-replace/close-on-clear pattern
+  rather than introducing a new resource-lifecycle convention.
+
+### Tests
+
+* `npx vitest run`: 64/64 (unaffected — no core logic touched).
+* `npx tsc -b`, `npx eslint . --ext ts,tsx`, `npm run build`: all clean.
+* `npx playwright test --project=chromium`: **30/30** (29 prior + 1 new
+  comprehensive Before/After test).
+* `npx playwright test --project=firefox`: **30/30**.
+* `npx playwright test --project=webkit`: **18 passed + 12 skipped** (the
+  new test skips there too, same OffscreenCanvas reason as the rest of the
+  optimize/export suite — optimize itself can't run in this WebKit build,
+  so there's never a result to compare).
+
+### Documentation
+
+* `README.md`: fixed the stale Playwright wording; added a one-line
+  feature mention.
+* `docs/IMPLEMENTATION_STATUS.md`: rewrote the "Before/After" DONE bullet
+  for the real visual comparison; added "Heavy-job exclusivity" as its own
+  DONE bullet; updated "Job system"/"Cancellation" bullets to reference the
+  cooperative-yield and exclusivity mechanisms; removed the now-complete
+  TODO item; corrected TEST STATUS counts/table; added a Known Limitations
+  note on the "Original = raw upload, not a re-encoded baseline" design
+  choice; re-ranked NEXT PRIORITIES.
+* `docs/ARCHITECTURE.md`: added "Job lifecycle: cooperative cancellation
+  and heavy-job exclusivity" and "Visual Before/After comparison
+  (Optimize)" sections; trimmed the older "Lifecycle sync and cleanup"
+  paragraph to point at the new, more detailed one instead of duplicating it.
+
+### Git
+
+* Two commits this session (code+tests, then the docs that describe them —
+  reversed from the task's suggested docs-first order, deliberately: the
+  IMPLEMENTATION_STATUS.md/ARCHITECTURE.md updates describe the comparison
+  feature itself, so committing them before the feature they describe
+  exists would leave an inconsistent intermediate checkout), both authored
+  as the repository's configured identity, no AI attribution — verified
+  individually via `git show -s --format="%an <%ae>" HEAD` after each. See
+  the git log for exact hashes/messages.
+* No remote configured (`git remote -v` empty at both start and end of
+  session) — commits remain local, consistent with every prior session.

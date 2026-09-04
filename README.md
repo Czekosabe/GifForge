@@ -15,7 +15,9 @@ export it — all in one page.
 * Playback speed adjustment
 * Text layers and image overlay layers, with drag/resize/rotate and
   per-frame visibility
-* Real GIF optimization, including a target-file-size mode
+* Real GIF optimization, including a target-file-size mode, with a visual
+  Before/After comparison (draggable split, animated or frame-by-frame) of
+  the actual optimized output before you download it
 * Static frame export to PNG/JPEG
 * Undo/redo and local autosave
 
@@ -41,7 +43,7 @@ npm run build        # production build to dist/
 npm run typecheck    # TypeScript project check
 npm run lint         # ESLint
 npm test              # unit tests (Vitest)
-npm run test:e2e      # browser tests (Playwright), if installed — see docs/ARCHITECTURE.md
+npm run test:e2e      # browser tests (Playwright, all 3 engines) — see docs/ARCHITECTURE.md
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how it's built,
