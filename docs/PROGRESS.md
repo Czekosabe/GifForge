@@ -1638,3 +1638,72 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
   production-site verification (browser smoke test against the real
   `https://czekosabe.github.io/GifForge/` URL) had not happened yet as of
   this entry — see the following PROGRESS entry for that.
+
+## 2026-09-07 09:33 — First production deployment to GitHub Pages, verified live
+
+### Deployment
+- Pushed the deploy-workflow commit (`b4895d3`); GitHub Actions run
+  `34095551377` ran all three jobs (`quality`, `e2e`, `deploy`) and all
+  three succeeded. `deploy` completed in 27s, gated correctly behind the
+  other two via `needs:`.
+- Deployment record (`gh api repos/Czekosabe/GifForge/deployments`):
+  environment `github-pages`, ref `main`, sha `b4895d3f449e0e9154b6f3d0
+  28ce3dc2cda0aa66` — matches the pushed commit exactly. Deployment
+  status: `success`. Confirmed URL from GitHub itself (not assumed):
+  **https://czekosabe.github.io/GifForge/**.
+
+### Production verification (real HTTPS URL, not localhost/dist/dev-server)
+- Page load: HTTP 200, app shell renders, zero console/page errors.
+- Real GIF upload (`fixtures/loading-icon.gif`) → decode → timeline
+  render ("Frame 1 / 24") — all working from the deployed subpath.
+- Visible edit performed (Rotate, 15°) and a real GIF export: file
+  downloaded, 68671 bytes, valid `GIF89a` signature.
+- WebM export tested explicitly: Export → WEBM showed "WEBM: Available"
+  (capability chunk loaded correctly), then a real export downloaded a
+  10019-byte file — confirms the deepest, most break-prone part of the
+  base-path change (mediabunny's dynamically-imported capability-check
+  AND full-encode chunks, loaded from *inside* an already-lazy module)
+  works correctly in real production.
+- Every asset in the chain returned 200 from `/GifForge/assets/...`:
+  main JS, CSS, worker, `EditorCanvas` chunk, `capabilities` chunk,
+  mediabunny's capability chunk, `exportVideo` chunk, mediabunny's full
+  encode chunk.
+- Privacy check: captured every network request during the full
+  upload→edit→export→WebM-export flow; zero requests to any origin other
+  than `czekosabe.github.io` (plus `blob:`/`data:` URLs) — user GIF bytes
+  never left the browser in production, matching the local-only claim.
+- All smoke-test scripts were throwaway (not committed) — real headless
+  Chromium via Playwright's browser API against the live URL.
+
+### CI (this run, `34095551377`)
+- Quality job: passed (25s).
+- E2E job: passed (3m43s) — 44 passed, 1 flaky, 0 skipped. The flaky test
+  is the same known `before-after-compare.spec.ts` cold-start case
+  (documented previously) — now a 4th consecutive occurrence in exactly
+  the same way; still no code change made, consistent with the existing
+  `retries: 1` design working as intended.
+- Deploy job: passed (27s), correctly gated on both jobs above.
+
+### GitHub
+- Homepage field set to `https://czekosabe.github.io/GifForge/` only
+  after the deployment was independently verified working — confirmed
+  via a fresh `gh api repos/...` read, not assumed from the edit command.
+- About description, topics, and default branch left unchanged (still
+  correct from the earlier onboarding session).
+
+### Documentation
+- `docs/ARCHITECTURE.md`: added the "Deployment" section (base-path
+  strategy, CI gating, no-backend/local-only guarantee).
+- `docs/IMPLEMENTATION_STATUS.md`: added a DONE entry for the production
+  deployment with the real verification detail above; separately
+  reconciled the CI section to record the third historical run
+  (`34091654086`) that a previous session's report had mentioned but
+  this file hadn't yet recorded.
+- `README.md`: added a "Live app" link beneath the CI badge/tagline —
+  kept to one link, no badge wall.
+
+### Git
+- This entry's commit and the implementation commit before it
+  (`b4895d3`) are both authored as the repository's configured identity,
+  no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD` after each.

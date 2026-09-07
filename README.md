@@ -4,6 +4,8 @@
 
 **Edit. Optimize. Export.**
 
+**Live app:** <https://czekosabe.github.io/GifForge/>
+
 GifForge is a browser-based animated GIF editor. Upload a GIF, edit it, and
 export it — all in one page.
 

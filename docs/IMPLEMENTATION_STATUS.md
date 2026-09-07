@@ -276,6 +276,22 @@ status" below for exactly what was checked.
   export. Per this session's own instructions, MP4 is deliberately **not**
   marked fully DONE until a real MP4 has actually been produced and played
   back successfully on a machine where H.264 encoding is available.
+- **Production deployment (GitHub Pages)** — live at
+  `https://czekosabe.github.io/GifForge/` (confirmed by GitHub's own API,
+  not assumed from the standard project-Pages URL pattern), deployed via
+  a CI-gated `deploy` job (`.github/workflows/ci.yml`) that only runs
+  after `quality`+`e2e` succeed on `main`. Verified against the actual
+  deployed HTTPS URL, not just a green deployment status: page loads
+  (200), real GIF upload/decode/timeline render, a visible edit (rotate),
+  a real GIF export (valid `GIF89a` signature, non-empty), the lazy
+  `EditorCanvas` chunk, and — the deepest and easiest link in this chain
+  to break with an incorrect base path — mediabunny's dynamically
+  imported capability-check and full-encode chunks, confirmed via a real
+  WebM export against production (10019 bytes downloaded). Zero page
+  errors, zero failed requests, and zero requests to any origin other
+  than `czekosabe.github.io` during the whole test (confirms user GIF
+  data never leaves the browser). See `docs/ARCHITECTURE.md`'s
+  "Deployment" section for the base-path/CI-gating design.
 
 # IN PROGRESS / PARTIAL
 
