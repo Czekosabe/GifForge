@@ -560,33 +560,36 @@ status" below for exactly what was checked.
   | Firefox  | 45/45  | 0       | 0      | Run manually this session; not in CI |
   | WebKit   | 20/45  | 25      | 0      | Video-export tests are capability-aware, not blanket-skipped by browser name: they self-skip via a real runtime check of whether WebM encoding is actually available (it isn't, in this WebKit build), same as the rest of this table's OffscreenCanvas-dependent skips (see "Known Limitations") |
 
-  ### First real GitHub Actions runs (2026-09-07, workflow runs `34090655162` and `34091172739`)
+  ### First real GitHub Actions runs (2026-09-07, workflow runs `34090655162`, `34091172739`, `34091654086`)
 
   The repository's local history was connected to `Czekosabe/GifForge` on
   GitHub this date, making this the first time `.github/workflows/ci.yml`
   ever actually ran remotely (it previously only existed locally with no
-  remote to run against). Both pushes' runs passed:
+  remote to run against). All three pushes' runs passed:
 
-  | Job | Run 1 | Run 2 |
-  |-----|-------|-------|
-  | Typecheck, lint, unit tests, build | ✓ passed (27s) — 106/106 unit tests | ✓ passed (20s) — same |
-  | Browser regression tests (Chromium) | ✓ passed (3m27s) — 45 total, 44 passed + 1 flaky, **0 skipped** | ✓ passed (3m37s) — identical: 44 passed + 1 flaky, **0 skipped** |
+  | Job | Run 1 | Run 2 | Run 3 |
+  |-----|-------|-------|-------|
+  | Typecheck, lint, unit tests, build | ✓ passed (27s) — 106/106 unit tests | ✓ passed (20s) — same | ✓ passed (27s) — same |
+  | Browser regression tests (Chromium) | ✓ passed (3m27s) — 45 total, 44 passed + 1 flaky, **0 skipped** | ✓ passed (3m37s) — identical: 44 passed + 1 flaky, **0 skipped** | ✓ passed (3m24s) — identical again: 44 passed + 1 flaky, **0 skipped** |
 
-  The zero-skip result (both runs) is the significant new evidence: all 9
-  `video-export.spec.ts` tests ran with real assertions rather than
+  The zero-skip result (all three runs) is the significant new evidence:
+  all 9 `video-export.spec.ts` tests ran with real assertions rather than
   capability-skipping, confirming WebM/VP9 WebCodecs encoding genuinely
   works in GitHub Actions' actual `ubuntu-latest` Chromium — this was
   previously only a reasoned expectation (see the resolved Known
-  Limitations entry). The *same* test flaked identically on both runs
-  (`before-after-compare.spec.ts`'s first test — 30.5s/30.6s on attempt
-  1, 2.6s/3.7s on retry); root-caused (not just guessed) to that test
-  being alphabetically first in `e2e/`, so its `uploadGif()` call is the
-  one place in the whole suite paying for a genuinely cold Vite preview
-  server + cold worker on GitHub's shared runners. `playwright.config.ts`
-  already sets `retries: 1` for CI specifically to absorb exactly this
-  class of environment-only timing margin, and it did so correctly both
-  times — no code or test change was made, since retrying already
-  produces an honest pass without loosening any assertion.
+  Limitations entry). The *same* test flaked identically on **all three**
+  runs (`before-after-compare.spec.ts`'s first test — 30.5s/30.6s/30.5s
+  on attempt 1, 2.6s/3.7s/2.7s on retry); root-caused (not just guessed)
+  to that test being alphabetically first in `e2e/`, so its
+  `uploadGif()` call is the one place in the whole suite paying for a
+  genuinely cold Vite preview server + cold worker on GitHub's shared
+  runners. `playwright.config.ts` already sets `retries: 1` for CI
+  specifically to absorb exactly this class of environment-only timing
+  margin, and it did so correctly all three times — no code or test
+  change was made, since retrying already produces an honest pass
+  without loosening any assertion. A consistent 3/3 recurrence in exactly
+  the same known way is treated as confirmation of the existing
+  explanation, not a reason to invent a new fix.
 
   "TESTED" below means an assertion in this table or in `e2e/` actually ran
   and passed against that engine this session — not inferred or assumed.

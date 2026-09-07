@@ -523,3 +523,40 @@ actually calls) hand-written declarations. Both are MIT-licensed.
 the render/export path (`compositeFrame.ts` uses raw `OffscreenCanvas` 2D
 APIs), per the requirement that the export pipeline not depend on React DOM
 rendering.
+
+## Deployment
+
+GifForge is deployed as a static site to GitHub Pages — no backend, no
+server API, no build-time or runtime dependency on any external service.
+Every GIF a user opens, edits, or exports is processed entirely in that
+user's own browser, exactly as it is when running locally; deployment
+changes nothing about where processing happens, only where the already-built
+static files are served from.
+
+Production is served from GitHub's project-Pages path (`/GifForge/`), not
+the domain root, which the app's worker and lazy-loaded chunks (`EditorCanvas`,
+the video-export capability probe, mediabunny's dynamically-imported encode
+module) all need to resolve correctly under. This is handled by a single
+build-level setting, not scattered pathname logic: `vite.config.ts` sets
+`base` to `/GifForge/` only when the `GITHUB_PAGES` environment variable is
+`'true'` (set only by the deploy job below), and to `/` otherwise — so
+`npm run dev`, a plain local `npm run build`, and `npm run preview` are all
+unaffected and stay at the domain root. `index.html`'s favicon link uses
+Vite's `%BASE_URL%` placeholder rather than a hardcoded `/favicon.svg`, since
+that specific reference (unlike `<script type="module">` or worker/chunk
+`import()`s, which Vite/the browser resolve relative to the importing
+module's own URL) is not otherwise base-aware.
+
+Deployment is a `deploy` job inside the existing `.github/workflows/ci.yml`
+— not a separate workflow — gated with `needs: [quality, e2e]` so a broken
+typecheck/lint/unit-test/build or a failing Chromium e2e run never reaches
+production, and `if: github.ref == 'refs/heads/main' && github.event_name
+== 'push'` so pull requests still get full CI coverage without ever
+deploying. It builds with `GITHUB_PAGES=true`, then uses GitHub's native
+Pages artifact/deploy actions (`actions/configure-pages`,
+`actions/upload-pages-artifact`, `actions/deploy-pages`) rather than pushing
+to a `gh-pages` branch. The job requests only the permissions this needs
+(`contents: read`, `pages: write`, `id-token: write`) and a job-scoped
+`concurrency: pages` group with `cancel-in-progress: true` so an in-flight
+deployment from an older commit is cancelled rather than racing a newer one.
+No repository secrets are required.

@@ -1565,3 +1565,76 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
   before-after-compare flake`), authored as the repository's configured
   identity, no AI attribution — verified via
   `git show -s --format="%an <%ae>" HEAD` — then pushed immediately.
+
+## 2026-09-07 09:26 — GitHub Pages deployment implemented (CI-gated) and enabled
+
+### Added
+- `deploy` job in `.github/workflows/ci.yml`, gated with `needs: [quality,
+  e2e]` and `if: github.ref == 'refs/heads/main' && github.event_name ==
+  'push'` — production only deploys after a successful typecheck/lint/
+  unit-test/build and a passing Chromium e2e run, and only from `main`,
+  never from a PR. Uses GitHub's native Pages actions
+  (`actions/configure-pages@v5`, `actions/upload-pages-artifact@v3`,
+  `actions/deploy-pages@v4`), not a `gh-pages` branch push. Job-scoped
+  permissions (`contents: read`, `pages: write`, `id-token: write`) and a
+  `concurrency: pages` group with `cancel-in-progress: true`. No secrets
+  required.
+- Enabled GitHub Pages on the repository via `gh api repos/Czekosabe/
+  GifForge/pages -X POST -f build_type=workflow` (was previously not
+  configured — `GET .../pages` returned 404). GitHub confirmed the real
+  production URL: `https://czekosabe.github.io/GifForge/`, `build_type:
+  workflow`, `https_enforced: true`, no CNAME/custom domain.
+
+### Changed
+- `vite.config.ts`: added `base`, set to `/GifForge/` only when
+  `GITHUB_PAGES=true` (set only by the deploy job), `/` otherwise — a
+  single build-level source of truth rather than pathname logic scattered
+  through components. `npm run dev`/plain `npm run build`/`npm run
+  preview` are all unaffected.
+- `index.html`: favicon `href` changed from a hardcoded `/favicon.svg` to
+  Vite's `%BASE_URL%favicon.svg` placeholder — the one static reference
+  in this app that is not otherwise base-aware (unlike the module script
+  tag or any worker/chunk `import()`, which Vite/the browser resolve
+  relative to the importing module's own URL regardless of `base`).
+
+### Verification (local, before ever touching the real Pages deployment)
+- Built with `GITHUB_PAGES=true npm run build` and inspected the actual
+  generated `dist/index.html` and JS: main script, CSS, and favicon all
+  correctly prefixed `/GifForge/...`; every dynamic `import()` in the
+  chain (main → `EditorCanvas`, main → `capabilities.js` → mediabunny's
+  capability chunk, worker → `exportVideo.js` → mediabunny's full encode
+  chunk) uses a relative specifier, which resolves correctly regardless
+  of `base` since it's relative to each importing module's own URL, not
+  the page's base.
+- Served the `GITHUB_PAGES=true` build locally via `vite preview` and
+  confirmed every asset (main JS, CSS, worker, `EditorCanvas` chunk,
+  capabilities chunk, both mediabunny chunks, favicon) returns 200 under
+  `http://localhost:4173/GifForge/`.
+- Ran a real headless-browser smoke test (throwaway script, not
+  committed) against that local `/GifForge/` server: real GIF upload,
+  decode, timeline render, Export panel → WebM capability check
+  ("WEBM: Available") — zero page errors, zero failed requests. Then a
+  full real WebM export against the same local subpath server: a
+  non-empty file downloaded, zero page errors — confirming the entire
+  lazy-chunk chain including mediabunny's encode module works correctly
+  under the Pages subpath before ever pushing.
+- Full local suite unaffected: `npm run typecheck` clean, `npm run lint`
+  clean, `npm test` 106/106, and the full Chromium e2e suite (45/45,
+  dev-server-based, base path irrelevant there) all still pass.
+
+### Documentation
+- `docs/ARCHITECTURE.md`: added a "Deployment" section covering the
+  static-hosting/no-backend model, the base-path strategy and why it
+  doesn't affect local dev, and the CI-gated deploy job design.
+- `docs/IMPLEMENTATION_STATUS.md`: reconciled the CI section to include
+  the third real GitHub Actions run (`34091654086`) that the previous
+  session's report mentioned but which hadn't yet been recorded here —
+  it passed with the identical known cold-start flake (30.5s → 2.7s on
+  retry), now a confirmed 3/3 recurrence in exactly the same way, not a
+  reason to invent a new fix.
+
+### Not yet done (next entry)
+- The actual push, the real GitHub Actions deployment run, and
+  production-site verification (browser smoke test against the real
+  `https://czekosabe.github.io/GifForge/` URL) had not happened yet as of
+  this entry — see the following PROGRESS entry for that.
