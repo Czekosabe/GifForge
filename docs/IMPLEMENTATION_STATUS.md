@@ -414,22 +414,22 @@ status" below for exactly what was checked.
   repeated real video-encoder allocation) rather than a confirmed
   application bug — no code change was made without a reproducible lead
   to fix. Revisit if it recurs with an actual error signal attached.
-- **WebM/VP9 codec support has only been verified on this local Windows
-  development machine's browsers** (Chromium, Firefox — both available;
-  WebKit — unavailable), **not inside the actual CI environment**
-  (`.github/workflows/ci.yml` runs both jobs on `ubuntu-latest`, Playwright
-  Chromium only). VP9 is an open, royalty-free codec with a bundled
-  software encoder (libvpx) built into Chromium/Firefox, so there is
-  reasonable expectation it behaves the same on Linux as it does here —
-  unlike H.264, which is more plausibly hardware-gated — but this project
-  has no mechanism to directly trigger or inspect a real GitHub Actions
-  run, so that expectation has not been independently confirmed. The new
-  video-export e2e tests are capability-aware (`isFormatAvailable()` +
-  `test.skip()`), so a CI environment lacking VP9 encode would only show
-  as additional skips, not red failures — but that would also mean the
-  video-export feature has zero actual regression coverage in CI, which
-  would be worth noticing if it happens. Revisit by checking an actual
-  CI run's e2e report for unexpected video-export skip counts.
+- ~~WebM/VP9 codec support has only been verified locally, not in CI~~ —
+  **resolved and verified 2026-09-07**: the repository's first real
+  GitHub Actions run (workflow run `34090655162`, triggered by connecting
+  this repo to `Czekosabe/GifForge`) exercised the actual `ubuntu-latest`
+  Chromium environment for real. All 45 e2e tests ran with **zero skips**
+  (including all 9 `video-export.spec.ts` tests), confirming WebM/VP9
+  WebCodecs encoding genuinely works in GitHub Actions' Linux Chromium —
+  not just reasoned about via "VP9 is software-encoded so it probably
+  works," but empirically confirmed. This closes the gap this entry used
+  to describe. (H.264/MP4 remains unverified everywhere, including CI,
+  per the separate MP4 entry above — VP9 and H.264 are independent
+  findings.) One test (`before-after-compare.spec.ts`'s first test) was
+  flaky on this first-ever real run — timed out at 30.5s on attempt 1,
+  passed in 2.6s on Playwright's automatic retry — consistent with a cold
+  CI runner's first real browser launch rather than an application bug;
+  revisit only if it recurs.
 
 # TECHNICAL DECISIONS
 
@@ -540,13 +540,36 @@ status" below for exactly what was checked.
   push/PR; the full cross-browser run (`npm run test:e2e`, all three
   engines) is run periodically/manually.
 
-  ### Browser test results (last run 2026-09-05, this repo's actual `e2e/` suite)
+  ### Browser test results (last local run 2026-09-05, this repo's actual `e2e/` suite)
 
   | Browser  | Passed | Skipped | Failed | Notes |
   |----------|-------:|--------:|-------:|-------|
-  | Chromium | 45/45  | 0       | 0      | CI default (`npm run test:e2e -- --project=chromium`) |
+  | Chromium | 45/45  | 0       | 0      | Local run matching CI config (`npm run test:e2e -- --project=chromium`) |
   | Firefox  | 45/45  | 0       | 0      | Run manually this session; not in CI |
   | WebKit   | 20/45  | 25      | 0      | Video-export tests are capability-aware, not blanket-skipped by browser name: they self-skip via a real runtime check of whether WebM encoding is actually available (it isn't, in this WebKit build), same as the rest of this table's OffscreenCanvas-dependent skips (see "Known Limitations") |
+
+  ### First real GitHub Actions run (2026-09-07, workflow run `34090655162`)
+
+  The repository's local history was connected to `Czekosabe/GifForge` on
+  GitHub this date, making this the first time `.github/workflows/ci.yml`
+  ever actually ran remotely (it previously only existed locally with no
+  remote to run against). Both jobs passed:
+
+  | Job | Result | Detail |
+  |-----|--------|--------|
+  | Typecheck, lint, unit tests, build | ✓ passed (27s) | Typecheck clean, lint clean, 106/106 unit tests (11 files), production build succeeded |
+  | Browser regression tests (Chromium) | ✓ passed (3m27s) | 45 total, 44 passed + 1 flaky (passed on retry), **0 skipped** |
+
+  The zero-skip result is the significant new evidence: all 9
+  `video-export.spec.ts` tests ran with real assertions rather than
+  capability-skipping, confirming WebM/VP9 WebCodecs encoding genuinely
+  works in GitHub Actions' actual `ubuntu-latest` Chromium — this was
+  previously only a reasoned expectation (see the resolved Known
+  Limitations entry). The one flaky test
+  (`before-after-compare.spec.ts`'s first test, timed out at 30.5s on
+  attempt 1, passed in 2.6s on retry) is consistent with a cold CI
+  runner's first-ever real browser launch, not an application regression
+  — no code change was made for it; revisit only if it recurs.
 
   "TESTED" below means an assertion in this table or in `e2e/` actually ran
   and passed against that engine this session — not inferred or assumed.

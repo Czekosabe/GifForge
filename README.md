@@ -1,5 +1,7 @@
 # GifForge
 
+[![CI](https://github.com/Czekosabe/GifForge/actions/workflows/ci.yml/badge.svg)](https://github.com/Czekosabe/GifForge/actions/workflows/ci.yml)
+
 **Edit. Optimize. Export.**
 
 GifForge is a browser-based animated GIF editor. Upload a GIF, edit it, and

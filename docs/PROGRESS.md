@@ -1440,3 +1440,88 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
 * One commit (`docs: fix stale WebKit skipped-test count in NEXT
   PRIORITIES`), authored as the repository's configured identity, no AI
   attribution — verified via `git show -s --format="%an <%ae>" HEAD`.
+
+## 2026-09-07 08:29 — GitHub repository connected and first remote CI verified
+
+### Added
+- Connected the existing local repository (39 commits, unchanged history) to
+  `Czekosabe/GifForge` on GitHub.
+
+### Git
+- Verified the target repository already existed, was public, and was
+  genuinely empty (`git ls-remote origin` returned nothing) before touching
+  anything.
+- Added `origin` pointing to `https://github.com/Czekosabe/GifForge.git`.
+- Authenticated GitHub CLI as `Czekosabe` via the standard browser device
+  flow (no tokens pasted or printed); verified via `gh api user --jq .login`
+  before any push.
+- First push attempt was correctly rejected by GitHub itself (`refusing to
+  allow an OAuth App to create or update workflow ci.yml without workflow
+  scope`) since the repo includes `.github/workflows/ci.yml` — a real
+  GitHub security restriction, not a bug. Resolved by adding the `workflow`
+  OAuth scope via `gh auth refresh`, re-verified the account was still
+  exactly `Czekosabe` and the scope was present before retrying.
+- Pushed the complete, unmodified `main` history (`git push -u origin
+  main`) — all 39 commits, no squashing, no rewriting. Verified local and
+  remote `main` SHAs match exactly
+  (`c2d9d9468c5f329aa22d041cd35a6cb1f44bfd15`), `git log origin/main..main`
+  and `git log main..origin/main` both empty, and GitHub's own commit API
+  associates the pushed commits with the `Czekosabe` account.
+
+### GitHub
+- Repository About description set to: "Local-first browser GIF editor
+  with frame editing, layers, optimization, and GIF/MP4/WebM export where
+  supported."
+- Topics added: gif, gif-editor, animation, image-editor, react,
+  typescript, vite, canvas, web-workers, webcodecs, webm, mp4,
+  video-export, client-side, privacy. Deliberately excluded `ffmpeg` since
+  GifForge does not use ffmpeg.wasm.
+- Homepage left empty — no verified deployed URL exists yet.
+- Default branch confirmed as `main` (already correct, no change needed).
+- Visibility confirmed unchanged (public).
+- Verified every field via a fresh `gh api repos/...` read after editing,
+  not assumed from the edit command's exit code.
+
+### CI
+- This was the very first time `.github/workflows/ci.yml` ever actually
+  ran on GitHub (it previously existed only locally with no remote to run
+  against). Watched the real run (workflow run `34090655162`) to
+  completion rather than trusting the summary card:
+  - Quality job (typecheck/lint/unit tests/build): passed in 27s.
+    Typecheck clean, lint clean, 106/106 unit tests across 11 files,
+    production build succeeded — matching local results exactly.
+  - Browser regression tests (Chromium, `ubuntu-latest`): passed in 3m27s.
+    45 total tests: 44 passed cleanly, 1 flaky (`before-after-compare.spec.ts`'s
+    first test timed out at 30.5s on attempt 1, passed in 2.6s on
+    Playwright's automatic retry — consistent with a cold CI runner's
+    first-ever real browser launch, not investigated further as a code
+    issue since it self-resolved and there's no reproducible lead), **0
+    skipped**.
+  - The 0-skip result is the significant finding: all 9
+    `video-export.spec.ts` tests ran with real assertions rather than
+    capability-skipping, empirically confirming WebM/VP9 WebCodecs
+    encoding genuinely works in GitHub Actions' actual Linux Chromium —
+    this closes a gap that was previously only a reasoned expectation
+    ("VP9 likely works since it's software-encoded"), not a confirmed
+    fact.
+
+### Documentation
+- `docs/IMPLEMENTATION_STATUS.md`: resolved the "WebM/VP9 CI environment
+  unverified" Known Limitations entry with the real evidence above; added
+  a "First real GitHub Actions run" subsection to TEST STATUS with the
+  actual job-by-job results; relabeled the existing local Chromium table
+  row to clarify it was a local run matching CI config, not the real CI
+  run itself.
+- `README.md`: added a CI status badge beneath the title (verified the
+  badge URL actually resolves, `200 image/svg+xml`, before adding it).
+- Confirmed no `LICENSE` file exists in the repository — not addressed
+  here, as the choice of GifForge's own project license belongs to the
+  user, not this session.
+
+### Git (documentation commit)
+- One commit (`docs: record GitHub onboarding and first remote CI
+  verification`), authored as the repository's configured identity, no AI
+  attribution — verified via `git show -s --format="%an <%ae>" HEAD` —
+  then pushed immediately, per the new permanent push policy: a
+  completed, verified unit of work should not sit locally when a
+  configured remote is available.
