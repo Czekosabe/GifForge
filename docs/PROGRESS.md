@@ -1525,3 +1525,43 @@ in (repeated upload/edit/export cycles, rapid UI interaction).
   then pushed immediately, per the new permanent push policy: a
   completed, verified unit of work should not sit locally when a
   configured remote is available.
+
+## 2026-09-07 08:36 — Confirmed and root-caused a recurring CI-only flaky test
+
+### Audit
+
+* The documentation commit pushed moments earlier itself triggered a
+  second real CI run (workflow run `34091172739`). Watched it rather than
+  assuming it would behave like the first: both jobs passed again, but
+  the exact same test flaked identically
+  (`before-after-compare.spec.ts`'s first test, 30.6s on attempt 1, 3.7s
+  on retry) — a 2/2 recurrence, not the one-off it looked like after the
+  first run.
+* Investigated rather than dismissing it: pulled the actual
+  `TimeoutError` location (`page.waitForSelector` inside `uploadGif()`,
+  `e2e/helpers.ts`) and confirmed this test is alphabetically first in
+  `e2e/`, meaning it is the one test in the whole suite whose initial
+  `page.goto('/')` + full-app-load wait pays for a genuinely cold Vite
+  preview server and cold worker on GitHub's shared runners — comfortable
+  on a local dev machine, occasionally tight against the existing 30s
+  ceiling on CI's first real page load. Confirmed `playwright.config.ts`
+  already has `retries: process.env.CI ? 1 : 0`, specifically anticipating
+  this class of CI-only timing margin — this is a pre-existing,
+  intentional design decision, not something discovered missing.
+
+### Documentation
+
+* `docs/IMPLEMENTATION_STATUS.md`: updated both the resolved WebM/VP9
+  Known Limitations entry and the TEST STATUS CI section to reflect both
+  real runs and the root-caused explanation, rather than leaving the
+  first run's "consistent with a cold runner, revisit if it recurs" note
+  understated now that it has, in fact, recurred identically.
+* No code or test change made — the existing `retries: 1` already
+  produces a correct, honest result both times; loosening the 30s
+  timeout without more evidence would be guessing, not fixing.
+
+### Git
+* One commit (`docs: confirm and root-cause the recurring CI-only
+  before-after-compare flake`), authored as the repository's configured
+  identity, no AI attribution — verified via
+  `git show -s --format="%an <%ae>" HEAD` — then pushed immediately.
